@@ -68,8 +68,12 @@ impl HandModel {
     /// hand-presence score. Horizontal aspect is preserved so the wrist→tip
     /// vector direction stays accurate for Left/Right pointing.
     ///
+    /// When `mirror_x` is `true` the source x-coordinate is flipped during
+    /// sampling so no separate full-frame mirror pass is needed — the mirror
+    /// is applied for free inside the letterbox loop.
+    ///
     /// Returns `None` if the frame is too small to sample.
-    pub fn run(&self, rgba: &[u8], width: u32, height: u32) -> Result<Option<HandLandmarks>> {
+    pub fn run(&self, rgba: &[u8], width: u32, height: u32, mirror_x: bool) -> Result<Option<HandLandmarks>> {
         if width < 4 || height < 4 {
             return Ok(None);
         }
@@ -82,6 +86,7 @@ impl HandModel {
         // visible content centered to within a pixel on common aspect ratios.
         let longer = w.max(h);
         let scale = INPUT_SIZE as f32 / longer as f32;
+        let scale_inv = 1.0 / scale;
         let new_w = ((w as f32) * scale).round() as usize;
         let new_h = ((h as f32) * scale).round() as usize;
         let pad_x = (INPUT_SIZE - new_w.min(INPUT_SIZE)) / 2;
@@ -90,30 +95,24 @@ impl HandModel {
         // Neutral mid-grey for padded pixels, matching MediaPipe's letterbox fill.
         const PAD_VALUE: f32 = 0.5;
         let mut data = vec![PAD_VALUE; INPUT_SIZE * INPUT_SIZE * 3];
-        for ty in 0..INPUT_SIZE {
-            if ty < pad_y || ty >= pad_y + new_h {
-                continue;
-            }
-            let sy = (((ty - pad_y) as f32 + 0.5) / scale) as usize;
+        let y_end = (pad_y + new_h).min(INPUT_SIZE);
+        let x_end = (pad_x + new_w).min(INPUT_SIZE);
+        for ty in pad_y..y_end {
+            let sy = (((ty - pad_y) as f32 + 0.5) * scale_inv) as usize;
             if sy >= h {
                 continue;
             }
             let row_off = sy * row_stride;
             let dst_row = ty * INPUT_SIZE * 3;
-            for tx in 0..INPUT_SIZE {
-                if tx < pad_x || tx >= pad_x + new_w {
+            for tx in pad_x..x_end {
+                let sx_raw = (((tx - pad_x) as f32 + 0.5) * scale_inv) as usize;
+                if sx_raw >= w {
                     continue;
                 }
-                let sx = (((tx - pad_x) as f32 + 0.5) / scale) as usize;
-                if sx >= w {
-                    continue;
-                }
+                let sx = if mirror_x { w - 1 - sx_raw } else { sx_raw };
                 let i = row_off + sx * 4;
-                if i + 2 >= rgba.len() {
-                    continue;
-                }
                 let dst = dst_row + tx * 3;
-                data[dst]     = rgba[i] as f32 / 255.0;
+                data[dst]     = rgba[i]     as f32 / 255.0;
                 data[dst + 1] = rgba[i + 1] as f32 / 255.0;
                 data[dst + 2] = rgba[i + 2] as f32 / 255.0;
             }

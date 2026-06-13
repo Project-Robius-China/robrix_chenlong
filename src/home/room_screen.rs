@@ -4885,6 +4885,10 @@ pub struct RoomScreen {
     /// query, the room it targets, the most recent `next_batch` token, and
     /// whether a request is currently in flight.
     #[rust] search_state: RoomSearchState,
+    /// Whether the VoIP call screen is currently visible for this room.
+    #[rust] show_voip_screen: bool,
+    /// Whether this room has an active call (from RTC notifications).
+    #[rust] has_active_call: bool,
 }
 
 /// Tracks the active server-side message search shown in the
@@ -4911,10 +4915,6 @@ impl RoomSearchState {
         self.next_batch = None;
         self.request_in_flight = false;
     }
-    /// Whether the VoIP call screen is currently visible for this room.
-    #[rust] show_voip_screen: bool,
-    /// Whether this room has an active call (from RTC notifications).
-    #[rust] has_active_call: bool,
 }
 
 impl Drop for RoomScreen {

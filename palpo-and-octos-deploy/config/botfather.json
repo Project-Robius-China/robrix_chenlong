@@ -3,9 +3,15 @@
   "name": "BotFather",
   "enabled": true,
   "config": {
-    "provider": "moonshot",
-    "model": "kimi-k2.5",
-    "api_key_env": "MOONSHOT_API_KEY",
+    "llm": {
+      "primary": {
+        "family_id": "deepseek",
+        "model_id": "deepseek-chat",
+        "route": {
+          "api_key_env": "DEEPSEEK_API_KEY"
+        }
+      }
+    },
     "admin_mode": true,
     "channels": [
       {

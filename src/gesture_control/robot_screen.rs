@@ -867,9 +867,7 @@ impl RobotScreen {
     /// (so the display and inference frames stay spatially identical —
     /// the user sees the same orientation the classifier sees), so we
     /// skip the redundant flip here. Other platforms still need it.
-    fn submit_frame_for_inference(&mut self, #[cfg_attr(target_os = "android", allow(unused_mut))] mut frame: WebRtcVideoFrame) {
-        #[cfg(not(target_os = "android"))]
-        mirror_rgba_horizontal_in_place(&mut frame.data, frame.width, frame.height);
+    fn submit_frame_for_inference(&mut self, frame: WebRtcVideoFrame) {
         if !self.logged_first_camera_frame {
             log!(
                 "RobotScreen: first inference frame received — {}x{} RGBA, {} bytes",
@@ -889,7 +887,7 @@ impl RobotScreen {
                 return;
             }
             log!("RobotScreen: scheduling inference worker (waiting for Ready)");
-            self.inference_pending = Some(InferenceWorker::spawn());
+            self.inference_pending = Some(InferenceWorker::spawn(!cfg!(target_os = "android")));
         }
         // Only submit once the background worker has signalled Ready (which
         // moves the pending value into `self.inference`). Frames received
@@ -1033,7 +1031,10 @@ impl RobotScreen {
                 // previously-emitted gesture so a hand-out-of-frame stretch
                 // doesn't flood the wire with stop requests — we only fire
                 // Stop on the first frame of "no gesture" after movement.
-                if !matches!(self.last_gesture, GestureAction::None | GestureAction::Stop) {
+                if !matches!(self.last_gesture,
+                    GestureAction::None | GestureAction::Stop
+                    | GestureAction::Left | GestureAction::Right
+                ) {
                     self.fire_command(cx, GestureAction::Stop);
                     self.last_gesture = GestureAction::Stop;
                 }
@@ -1048,19 +1049,13 @@ impl RobotScreen {
                 // movement detection, so holding the pose keeps the robot
                 // going). Manual control buttons bypass this; they already
                 // emit Stop on release.
-                if matches!(
-                    result.detected,
-                    GestureAction::Forward
-                        | GestureAction::Back
-                        | GestureAction::Left
-                        | GestureAction::Right
-                ) {
+                // Auto-stop only for Forward/Back (motor-on gestures).
+                // Left/Right are single-shot turns — no timed stop needed.
+                if matches!(result.detected, GestureAction::Forward | GestureAction::Back) {
                     self.auto_stop_at = Some(
                         Instant::now() + std::time::Duration::from_millis(AUTO_STOP_AFTER_MS),
                     );
                 } else {
-                    // Grab/Release/Stop reset the timer too (no auto-stop
-                    // needed; those are one-shot or already-Stop actions).
                     self.auto_stop_at = None;
                 }
             }
@@ -1375,9 +1370,11 @@ fn rotate_rgba_ccw_90(frame: &WebRtcVideoFrame) -> WebRtcVideoFrame {
     }
 }
 
-/// Horizontally flip a packed-RGBA buffer in place. Used to undo the selfie
-/// mirror on front-camera frames before they go to the hand-landmark model —
-/// see `RobotScreen::submit_frame_for_inference` for context.
+/// Horizontally flip a packed-RGBA buffer in place. Used on Android to undo
+/// the selfie mirror on AcameraCapture frames in `pump_camera_frames`.
+/// On other platforms the mirror is applied inside `hand_model::run` via the
+/// `mirror_x` flag so no separate full-frame copy is needed.
+#[cfg(target_os = "android")]
 fn mirror_rgba_horizontal_in_place(data: &mut [u8], width: u32, height: u32) {
     let w = width as usize;
     let h = height as usize;
