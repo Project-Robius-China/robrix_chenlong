@@ -23,7 +23,9 @@ script_mod! {
     mod.widgets.ICON_EDIT             = crate_resource("self://resources/icons/edit.svg")
     mod.widgets.ICON_EXTERNAL_LINK    = crate_resource("self://resources/icons/external_link.svg")
     mod.widgets.ICON_IMPORT           = crate_resource("self://resources/icons/import.svg") // TODO: FIX
+    mod.widgets.ICON_GLOBE            = crate_resource("self://resources/icons/globe.svg")
     mod.widgets.ICON_HIERARCHY        = crate_resource("self://resources/icons/hierarchy.svg")
+    mod.widgets.ICON_LOCK             = crate_resource("self://resources/icons/lock.svg")
     mod.widgets.ICON_HOME             = crate_resource("self://resources/icons/home.svg")
     mod.widgets.ICON_HTML_FILE        = crate_resource("self://resources/icons/html_file.svg")
     mod.widgets.ICON_INFO             = crate_resource("self://resources/icons/info.svg")
@@ -37,6 +39,7 @@ script_mod! {
     mod.widgets.ICON_PIN              = crate_resource("self://resources/icons/pin.svg")
     mod.widgets.ICON_REPLY            = crate_resource("self://resources/icons/reply.svg")
     mod.widgets.ICON_SEARCH           = crate_resource("self://resources/icons/search.svg")
+    mod.widgets.ICON_THREADS          = crate_resource("self://resources/icons/double_chat.svg")
     mod.widgets.ICON_SEND             = crate_resource("self://resources/icon_send.svg")
     mod.widgets.ICON_SETTINGS         = crate_resource("self://resources/icons/settings.svg")
     mod.widgets.ICON_SQUARES          = crate_resource("self://resources/icons/squares_filled.svg")

@@ -22,7 +22,7 @@ use crate::{
         event_source_modal::{EventSourceModalAction, EventSourceModalWidgetRefExt}, invite_modal::{InviteModalAction, InviteModalWidgetRefExt, mark_invite_modal_closed}, invite_screen::{InviteScreenWidgetRefExt, LeaveRoomResultAction}, main_desktop_ui::MainDesktopUiAction, navigation_tab_bar::{NavigationBarAction, SelectedTab}, new_message_context_menu::NewMessageContextMenuWidgetRefExt, room_context_menu::{RoomContextMenuAction, RoomContextMenuWidgetRefExt}, room_screen::{InviteAction, MessageAction, RoomScreenWidgetRefExt, TimelineUpdate, clear_timeline_states}, room_settings_modal::{RoomSettingsAction, RoomSettingsModalWidgetRefExt}, rooms_list::{RoomsListAction, RoomsListRef, RoomsListUpdate, clear_all_invited_rooms, enqueue_rooms_list_update}, rooms_list_header::RoomsListHeaderAction, space_lobby::SpaceLobbyScreenWidgetRefExt, spaces_bar::SpacesBarRef
     }, i18n::{AppLanguage, tr_fmt, tr_key}, join_leave_room_modal::{
         JoinLeaveModalKind, JoinLeaveRoomModalAction, JoinLeaveRoomModalWidgetRefExt
-    }, login::login_screen::LoginAction, logout::logout_confirm_modal::{LogoutAction, LogoutConfirmModalAction, LogoutConfirmModalWidgetRefExt}, persistence, profile::user_profile_cache::clear_user_profile_cache, register::RegisterAction, room::BasicRoomDetails, shared::{confirmation_modal::{ConfirmationModalContent, ConfirmationModalWidgetRefExt}, file_upload_modal::{FilePreviewerAction, FileUploadModalWidgetRefExt}, forward_modal::{ForwardMessageModalAction, ForwardMessageModalWidgetRefExt}, image_viewer::{ImageViewerAction, LoadState}, popup_list::{PopupKind, enqueue_popup_notification}, room_filter_input_bar::FilterAction}, sliding_sync::{DirectMessageRoomAction, MatrixRequest, RemoteDirectorySearchKind, RemoteDirectorySearchResult, RoomSettingsFetchedAction, RoomAvatarUploadedAction, TimelineKind, AccountSwitchAction, current_user_id, get_client, submit_async_request, get_timeline_update_sender}, updater::{UpdateCheckOutcome, check_for_updates, load_skipped_update_version, save_skipped_update_version, update_release_page_url}, utils::RoomNameId, verification::VerificationAction, verification_modal::{
+    }, login::login_screen::LoginAction, logout::logout_confirm_modal::{LogoutAction, LogoutConfirmModalAction, LogoutConfirmModalWidgetRefExt}, persistence, profile::user_profile_cache::clear_user_profile_cache, register::RegisterAction, room::BasicRoomDetails, shared::{confirmation_modal::{ConfirmationModalAction, ConfirmationModalContent, ConfirmationModalWidgetRefExt}, file_upload_modal::{FilePreviewerAction, FileUploadModalWidgetRefExt}, forward_modal::{ForwardMessageModalAction, ForwardMessageModalWidgetRefExt}, image_viewer::{ImageViewerAction, LoadState}, popup_list::{PopupKind, enqueue_popup_notification}, room_filter_input_bar::FilterAction}, sliding_sync::{DirectMessageRoomAction, MatrixRequest, RemoteDirectorySearchKind, RemoteDirectorySearchResult, RoomSettingsFetchedAction, RoomAvatarUploadedAction, TimelineKind, AccountSwitchAction, current_user_id, get_client, submit_async_request, get_timeline_update_sender}, updater::{UpdateCheckOutcome, check_for_updates, load_skipped_update_version, save_skipped_update_version, update_release_page_url}, utils::RoomNameId, verification::VerificationAction, verification_modal::{
         VerificationModalAction,
         VerificationModalWidgetRefExt,
     }, settings::app_preferences::{AppPreferences, AppPreferencesAction, UiZoom},
@@ -31,6 +31,9 @@ use crate::{
 use crate::shared::room_filter_search_results::{RoomFilterResultAction, RoomFilterResultTarget};
 use crate::shared::room_filter_search_results::RoomFilterSearchResultsListWidgetRefExt;
 use crate::shared::video_message_player_modal::WindowFullscreenAction;
+use crate::home::global_message_search::{GlobalMessageSearchUiAction, GlobalMessageSearchWidgetRefExt};
+use crate::home::sticker_modal::StickerModalWidgetRefExt;
+use crate::sliding_sync::GlobalMessageSearchAction;
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -235,6 +238,30 @@ script_mod! {
                                             search_results_list := mod.widgets.RoomFilterSearchResultsList {}
                                         }
                                     }
+
+                                    // "Search in all rooms" — fires a cross-room
+                                    // message search via
+                                    // `MatrixRequest::SearchAllMessages`.
+                                    // Mounted OUTSIDE the bounded
+                                    // ScrollYView above so it stays
+                                    // visible even when the rooms list
+                                    // is long enough to fill the scroll
+                                    // area. Always visible for
+                                    // discoverability; clicking with an
+                                    // empty/short query is a no-op.
+                                    global_search_button_row := View {
+                                        width: Fill,
+                                        height: Fit,
+                                        margin: Inset{top: 8}
+                                        global_search_button := RobrixNeutralIconButton {
+                                            width: Fill,
+                                            text: "Search in all rooms"
+                                        }
+                                    }
+
+                                    // Results live inside their own widget so the
+                                    // existing rooms list above stays unchanged.
+                                    global_message_search := GlobalMessageSearch {}
                                 }
                             }
                         }
@@ -265,6 +292,17 @@ script_mod! {
                                 width: Fill,
                                 align: Align{x: 0.5, y: 0.5},
                                 event_source_modal_inner := EventSourceModal {}
+                            }
+                        }
+
+                        // Sticker pack catalog modal (opened by the sticker
+                        // drawer in the room input bar).
+                        sticker_modal := Modal {
+                            content +: {
+                                height: Fill,
+                                width: Fill,
+                                align: Align{x: 0.5, y: 0.5},
+                                sticker_modal_inner := StickerModal {}
                             }
                         }
 
@@ -416,6 +454,15 @@ pub struct App {
     /// This can be either a room we're waiting to join, or one we're waiting to be invited to.
     /// Also includes an optional room ID to be closed once the awaited room has been loaded.
     #[rust] waiting_to_navigate_to_room: Option<(BasicRoomDetails, Option<OwnedRoomId>)>,
+    /// Pending jump-to-event request from a global message search click.
+    /// Set when the user clicks a hit in `GlobalMessageSearch`; cleared
+    /// once the target room finishes loading and we've dispatched
+    /// `MessageAction::JumpToEvent` to the room screen.
+    ///
+    /// Stored as `(room_id, event_id)` so the `RoomLoadedSuccessfully`
+    /// handler can confirm the load event matches the room we're
+    /// waiting on before firing the scroll.
+    #[rust] pending_jump_to_event: Option<(OwnedRoomId, OwnedEventId)>,
     /// A stack of previously-selected rooms for mobile navigation.
     /// When a view is popped off the stack, the previous `selected_room` is restored from here.
     #[rust] mobile_room_nav_stack: Vec<SelectedRoom>,
@@ -424,6 +471,12 @@ pub struct App {
     #[rust] auto_update_check_started: bool,
     #[rust] skipped_update_version: Option<String>,
     #[rust] update_prompt_versions: Option<(String, String)>,
+    /// The app language that `sync_app_language()` last applied to the UI,
+    /// used to skip the (deep, root-level) widget lookups in that function
+    /// when the language hasn't changed. `handle_actions()` calls it on every
+    /// actions batch (i.e., every frame during a scroll), so it must be cheap
+    /// in the common no-change case. `None` forces the next call to re-apply.
+    #[rust] synced_app_language: Option<AppLanguage>,
 }
 
 impl ScriptHook for App {
@@ -705,25 +758,46 @@ impl MatchEvent for App {
         }
     }
 
+    fn handle_audio_devices(&mut self, cx: &mut Cx, devices: &AudioDevicesEvent) {
+        cx.use_audio_outputs(&devices.default_output());
+    }
+
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
         self.sync_app_language(cx);
 
-        let invite_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(invite_confirmation_modal_inner));
-        if let Some(_accepted) = invite_confirmation_modal_inner.closed(actions) {
-            self.ui.modal(cx, ids!(invite_confirmation_modal)).close(cx);
+        // Pre-scan this actions batch for the *types* of events the blocks below
+        // care about, before paying for any widget lookups. Casting an action's
+        // data is a cheap downcast, but resolving a widget via a root-level
+        // `ids!()` lookup is expensive during scrolling: PortalList item
+        // recycling invalidates the widget-tree cache every frame, forcing each
+        // lookup to re-collect and re-hash the tree. Scroll-frame actions contain
+        // no modal-close or button-click events, so these gates skip all six
+        // root-level lookups below on every frame of a scroll.
+        let any_confirmation_modal_closed = actions.iter().any(|action|
+            matches!(action.as_widget_action().cast_ref(), ConfirmationModalAction::Close(_))
+        );
+        let any_button_clicked = actions.iter().any(|action|
+            matches!(action.as_widget_action().cast(), ButtonAction::Clicked(_))
+        );
+
+        if any_confirmation_modal_closed {
+            let invite_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(invite_confirmation_modal_inner));
+            if let Some(_accepted) = invite_confirmation_modal_inner.closed(actions) {
+                self.ui.modal(cx, ids!(invite_confirmation_modal)).close(cx);
+            }
+
+            let delete_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(delete_confirmation_modal_inner));
+            if let Some(_accepted) = delete_confirmation_modal_inner.closed(actions) {
+                self.ui.modal(cx, ids!(delete_confirmation_modal)).close(cx);
+            }
+
+            let positive_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(positive_confirmation_modal_inner));
+            if let Some(_accepted) = positive_confirmation_modal_inner.closed(actions) {
+                self.ui.modal(cx, ids!(positive_confirmation_modal)).close(cx);
+            }
         }
 
-        let delete_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(delete_confirmation_modal_inner));
-        if let Some(_accepted) = delete_confirmation_modal_inner.closed(actions) {
-            self.ui.modal(cx, ids!(delete_confirmation_modal)).close(cx);
-        }
-
-        let positive_confirmation_modal_inner = self.ui.confirmation_modal(cx, ids!(positive_confirmation_modal_inner));
-        if let Some(_accepted) = positive_confirmation_modal_inner.closed(actions) {
-            self.ui.modal(cx, ids!(positive_confirmation_modal)).close(cx);
-        }
-
-        if self.ui.button(cx, ids!(update_available_modal_inner.update_upgrade_button)).clicked(actions) {
+        if any_button_clicked && self.ui.button(cx, ids!(update_available_modal_inner.update_upgrade_button)).clicked(actions) {
             let latest_version = self.update_prompt_versions
                 .as_ref()
                 .map(|(_, latest_version)| latest_version.clone());
@@ -745,11 +819,11 @@ impl MatchEvent for App {
             self.update_prompt_versions = None;
             self.ui.modal(cx, ids!(update_available_modal)).close(cx);
         }
-        if self.ui.button(cx, ids!(update_available_modal_inner.update_cancel_button)).clicked(actions) {
+        if any_button_clicked && self.ui.button(cx, ids!(update_available_modal_inner.update_cancel_button)).clicked(actions) {
             self.update_prompt_versions = None;
             self.ui.modal(cx, ids!(update_available_modal)).close(cx);
         }
-        if self.ui.button(cx, ids!(update_available_modal_inner.update_skip_button)).clicked(actions) {
+        if any_button_clicked && self.ui.button(cx, ids!(update_available_modal_inner.update_skip_button)).clicked(actions) {
             if let Some((_, latest_version)) = self.update_prompt_versions.as_ref() {
                 self.skipped_update_version = Some(latest_version.clone());
                 if let Err(error) = save_skipped_update_version(Some(latest_version.as_str())) {
@@ -765,6 +839,7 @@ impl MatchEvent for App {
                 AppPreferencesAction::ViewModeChanged(_)
                 | AppPreferencesAction::SendOnEnterChanged(_)
                 | AppPreferencesAction::UiZoomChanged(_)
+                | AppPreferencesAction::AgentChatEnabledChanged(_)
                 | AppPreferencesAction::RobotControlIpChanged(_)
             ) = action.downcast_ref() {
                 if let Some(user_id) = current_user_id() {
@@ -1040,6 +1115,130 @@ impl MatchEvent for App {
                 cx.stop_timer(self.room_filter_debounce_timer);
                 self.pending_room_filter_keywords = keywords.clone();
                 self.room_filter_debounce_timer = cx.start_timeout(0.12);
+
+                // Clear any previously-shown global results since the
+                // query has changed (stale). The "Search in all rooms"
+                // button is always rendered; its click handler enforces
+                // the 2-char minimum.
+                if let Some(mut g) = self.ui.global_message_search(
+                    cx,
+                    ids!(room_filter_modal_inner.global_message_search),
+                ).borrow_mut() {
+                    g.clear(cx);
+                }
+                continue;
+            }
+
+            // Click on "Search in all rooms" → submit cross-room search.
+            // Always-rendered button; silently no-ops when the query is
+            // too short.
+            if self.ui.button(cx, ids!(room_filter_modal_inner.global_search_button_row.global_search_button)).clicked(actions) {
+                let query = self.ui
+                    .text_input(cx, ids!(room_filter_modal_inner.room_filter_input_bar.input))
+                    .text()
+                    .trim()
+                    .to_string();
+                if query.chars().count() >= 2 {
+                    if let Some(mut g) = self.ui.global_message_search(
+                        cx,
+                        ids!(room_filter_modal_inner.global_message_search),
+                    ).borrow_mut() {
+                        g.set_loading(cx, query.clone());
+                    }
+                    submit_async_request(MatrixRequest::SearchAllMessages {
+                        search_term: query,
+                        next_batch: None,
+                        abort_previous: true,
+                    });
+                } else {
+                    enqueue_popup_notification(
+                        "Type at least 2 characters to search.",
+                        PopupKind::Info,
+                        Some(2.0),
+                    );
+                }
+                continue;
+            }
+
+            // Forward GlobalMessageSearchAction (response from sliding_sync) into the widget.
+            if let Some(g_action) = action.downcast_ref::<GlobalMessageSearchAction>() {
+                let widget_ref = self.ui.global_message_search(
+                    cx,
+                    ids!(room_filter_modal_inner.global_message_search),
+                );
+                if let Some(mut g) = widget_ref.borrow_mut() {
+                    match g_action {
+                        GlobalMessageSearchAction::Received {
+                            search_term, hits, next_batch, total_count, is_initial_page,
+                        } => {
+                            if *is_initial_page {
+                                g.set_results(
+                                    cx,
+                                    search_term.clone(),
+                                    hits.clone(),
+                                    *total_count,
+                                    next_batch.clone(),
+                                );
+                            } else {
+                                g.append_results(
+                                    cx,
+                                    hits.clone(),
+                                    *total_count,
+                                    next_batch.clone(),
+                                );
+                            }
+                        }
+                        GlobalMessageSearchAction::Failed { error, .. } => {
+                            g.set_error(cx, error.clone());
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Result row click → close the modal, navigate to the target
+            // room, and stash the event id so the scroll fires once the
+            // room finishes loading.
+            if let GlobalMessageSearchUiAction::JumpToEvent { room_id, event_id } =
+                action.as_widget_action().cast_ref()
+            {
+                self.ui.modal(cx, ids!(room_filter_modal)).close(cx);
+                if let Some(room_name_id) = cx.get_global::<RoomsListRef>().get_room_name(room_id) {
+                    // Stash the (room_id, event_id) pair; the
+                    // `RoomLoadedSuccessfully` handler will pick it up
+                    // and dispatch the scroll to the now-active room
+                    // screen.
+                    self.pending_jump_to_event = Some((room_id.clone(), event_id.clone()));
+                    cx.widget_action(
+                        self.ui.widget_uid(),
+                        RoomsListAction::Selected(SelectedRoom::JoinedRoom { room_name_id }),
+                    );
+                } else {
+                    enqueue_popup_notification(
+                        "Could not open room — not yet known to this client.",
+                        PopupKind::Warning,
+                        Some(3.0),
+                    );
+                }
+                continue;
+            }
+
+            // "Load more" click → submit a paginated follow-up.
+            if let GlobalMessageSearchUiAction::LoadMoreClicked = action.as_widget_action().cast_ref() {
+                let widget_ref = self.ui.global_message_search(
+                    cx,
+                    ids!(room_filter_modal_inner.global_message_search),
+                );
+                if let Some(g) = widget_ref.borrow() {
+                    if let Some(token) = g.next_batch().map(str::to_owned) {
+                        let query = g.last_query().to_owned();
+                        submit_async_request(MatrixRequest::SearchAllMessages {
+                            search_term: query,
+                            next_batch: Some(token),
+                            abort_previous: false,
+                        });
+                    }
+                }
                 continue;
             }
 
@@ -1398,6 +1597,23 @@ impl MatchEvent for App {
                     }
                     continue;
                 }
+                // If the freshly-loaded room is the one a global-search
+                // hit is waiting on, dispatch `MessageAction::JumpToEvent`
+                // so the room screen scrolls to (and paginates back to,
+                // if needed) the matching event.
+                Some(AppStateAction::RoomLoadedSuccessfully { room_name_id, .. }) if
+                    self.pending_jump_to_event.as_ref()
+                        .is_some_and(|(rid, _)| rid == room_name_id.room_id()) =>
+                {
+                    if let Some((_, event_id)) = self.pending_jump_to_event.take() {
+                        log!("Loaded awaited room {room_name_id:?}, jumping to event {event_id}");
+                        cx.widget_action(
+                            self.ui.widget_uid(),
+                            MessageAction::JumpToEvent(event_id),
+                        );
+                    }
+                    continue;
+                }
                 _ => {}
             }
 
@@ -1506,7 +1722,7 @@ impl MatchEvent for App {
             // Handle a request to show the invite confirmation modal.
             if let Some(InviteAction::ShowInviteConfirmationModal(content_opt)) = action.downcast_ref() {
                 if let Some(content) = content_opt.borrow_mut().take() {
-                    invite_confirmation_modal_inner.show(cx, content);
+                    self.ui.confirmation_modal(cx, ids!(invite_confirmation_modal_inner)).show(cx, content);
                     self.ui.modal(cx, ids!(invite_confirmation_modal)).open(cx);
                 }
                 continue;
@@ -1515,7 +1731,7 @@ impl MatchEvent for App {
             // Handle a request to show the generic positive confirmation modal.
             if let Some(PositiveConfirmationModalAction::Show(content_opt)) = action.downcast_ref() {
                 if let Some(content) = content_opt.borrow_mut().take() {
-                    positive_confirmation_modal_inner.show(cx, content);
+                    self.ui.confirmation_modal(cx, ids!(positive_confirmation_modal_inner)).show(cx, content);
                     self.ui.modal(cx, ids!(positive_confirmation_modal)).open(cx);
                 }
                 continue;
@@ -1699,6 +1915,29 @@ impl MatchEvent for App {
                 _ => {}
             }
 
+            // Handle StickerModalAction to open/close the sticker catalog modal.
+            match action.downcast_ref::<crate::home::sticker_modal::StickerModalAction>() {
+                Some(crate::home::sticker_modal::StickerModalAction::Open) => {
+                    self.ui
+                        .sticker_modal(cx, ids!(sticker_modal_inner))
+                        .show(cx);
+                    self.ui.modal(cx, ids!(sticker_modal)).open(cx);
+                    continue;
+                }
+                Some(crate::home::sticker_modal::StickerModalAction::OpenStickersOnly) => {
+                    self.ui
+                        .sticker_modal(cx, ids!(sticker_modal_inner))
+                        .show_stickers_only(cx);
+                    self.ui.modal(cx, ids!(sticker_modal)).open(cx);
+                    continue;
+                }
+                Some(crate::home::sticker_modal::StickerModalAction::Close) => {
+                    self.ui.modal(cx, ids!(sticker_modal)).close(cx);
+                    continue;
+                }
+                _ => {}
+            }
+
             // Handle DirectMessageRoomActions
             match action.downcast_ref() {
                 Some(DirectMessageRoomAction::FoundExisting { user_id, room_name_id }) => {
@@ -1728,7 +1967,7 @@ impl MatchEvent for App {
                             user_profile.user_id,
                         ),
                     };
-                    positive_confirmation_modal_inner.show(
+                    self.ui.confirmation_modal(cx, ids!(positive_confirmation_modal_inner)).show(
                         cx,
                         ConfirmationModalContent {
                             title_text: "Create New Direct Message".into(),
@@ -2083,8 +2322,17 @@ impl App {
         self.ui.modal(cx, ids!(update_available_modal)).open(cx);
     }
 
-    fn sync_app_language(&self, cx: &mut Cx) {
+    fn sync_app_language(&mut self, cx: &mut Cx) {
         let app_language = self.app_state.app_language;
+        // Skip the widget lookups + set_text calls below if we've already
+        // synced this language. This runs on every actions batch, and the
+        // root-level `ids!()` lookups are expensive during scrolling because
+        // PortalList item recycling invalidates the widget-tree cache every
+        // frame.
+        if self.synced_app_language == Some(app_language) {
+            return;
+        }
+        self.synced_app_language = Some(app_language);
         self.ui.label(cx, ids!(room_filter_modal_inner.search_results_title))
             .set_text(cx, tr_key(app_language, "app.room_filter.search_results_title"));
         self.ui.label(cx, ids!(room_filter_modal_inner.search_results_scroll.search_results.search_results_empty))
@@ -2326,12 +2574,13 @@ impl App {
     /// screen configuration are effectively no-ops — MainDesktopUI handles
     /// room display via dock tabs instead.
     fn push_selected_room_view(&mut self, cx: &mut Cx, selected_room: SelectedRoom) {
-        if self.app_state.selected_room.as_ref().is_some_and(|current| current == &selected_room) {
-            return;
-        }
-
         // Use the actual StackNavigation depth to pick the next room view slot.
         let new_depth = self.ui.stack_navigation(cx, ids!(view_stack)).depth();
+        let same_selected_room = self.app_state.selected_room.as_ref()
+            .is_some_and(|current| current == &selected_room);
+        if same_selected_room && new_depth > 0 {
+            return;
+        }
 
         // Determine which view to push and configure its content.
         // The `set_displayed_room` / `set_displayed_invite` / `set_displayed_space` calls
@@ -2392,7 +2641,7 @@ impl App {
         }
 
         // Save the current selected_room onto the navigation stack before replacing it.
-        if let Some(prev) = self.app_state.selected_room.take() {
+        if !same_selected_room && let Some(prev) = self.app_state.selected_room.take() {
             self.mobile_room_nav_stack.push(prev);
         }
         // Update app state (used by both Desktop and Mobile paths).

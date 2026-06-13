@@ -13,6 +13,11 @@ pub struct AppPreferences {
     pub thumbnail_max_height: ThumbnailMaxHeight,
     #[serde(default)]
     pub ui_zoom: UiZoom,
+    /// Whether the experimental remote agent-chat support is enabled at runtime.
+    /// Only has an effect when the crate is built with the `agent_chat` feature;
+    /// gates the workflow `/` slash-commands. Defaults to off.
+    #[serde(default)]
+    pub agent_chat_enabled: bool,
     /// IP (or `ip:port`) of the robotic-arm-car endpoint used by the Robot
     /// tab's gesture controller. `None` until the user enters a value.
     #[serde(default)]
@@ -26,6 +31,7 @@ impl Default for AppPreferences {
             send_on_enter: true,
             thumbnail_max_height: ThumbnailMaxHeight::default(),
             ui_zoom: UiZoom::default(),
+            agent_chat_enabled: false,
             robot_control_ip: None,
         }
     }
@@ -40,6 +46,11 @@ impl AppPreferences {
     pub fn on_send_on_enter_changed(&self, cx: &mut Cx) {
         cx.global::<AppPreferencesGlobal>().0.send_on_enter = self.send_on_enter;
         cx.action(AppPreferencesAction::SendOnEnterChanged(self.send_on_enter));
+    }
+
+    pub fn on_agent_chat_enabled_changed(&self, cx: &mut Cx) {
+        cx.global::<AppPreferencesGlobal>().0.agent_chat_enabled = self.agent_chat_enabled;
+        cx.action(AppPreferencesAction::AgentChatEnabledChanged(self.agent_chat_enabled));
     }
 
     pub fn on_thumbnail_max_height_changed(&self, cx: &mut Cx) {
@@ -105,6 +116,7 @@ impl AppPreferences {
         self.on_send_on_enter_changed(cx);
         self.on_thumbnail_max_height_changed(cx);
         self.on_ui_zoom_changed(cx);
+        self.on_agent_chat_enabled_changed(cx);
         self.on_robot_control_ip_changed(cx);
     }
 }
@@ -227,6 +239,7 @@ pub enum AppPreferencesAction {
     ViewModeChanged(ViewModeOverride),
     SendOnEnterChanged(bool),
     UiZoomChanged(UiZoom),
+    AgentChatEnabledChanged(bool),
     RobotControlIpChanged(Option<String>),
 }
 
