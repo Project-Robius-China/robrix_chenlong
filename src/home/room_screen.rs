@@ -6171,6 +6171,7 @@ impl Widget for RoomScreen {
                                                 &mut self.octos_action_button_contexts,
                                                 &self.disabled_octos_action_source_event_ids,
                                                 &self.selected_octos_action_by_source_event_id,
+                                                &tl_state.sse_streams,
                                             )
                                         },
                                         // TODO: properly implement `Poll` as a regular Message-like timeline item.
@@ -7255,6 +7256,39 @@ impl RoomScreen {
                         tl.items.iter().map(item_event_id),
                         &mut tl.streaming_messages,
                     );
+
+                    // Detect SSE messages and start fetching if not already in progress.
+                    for item in tl.items.iter() {
+                        if let Some(event_tl_item) = item.as_event() {
+                            if let Some(event_id) = event_tl_item.event_id() {
+                                if let TimelineItemContent::MsgLike(msg_like_content) = event_tl_item.content() {
+                                    if let MsgLikeKind::Message(message) = &msg_like_content.kind {
+                                        if let MessageType::Text(text_content) = message.msgtype() {
+                                            if let Some(sse_url) = parse_sse_header(&text_content.body) {
+                                                let sse_state = tl.sse_streams.entry(event_id.to_owned()).or_insert_with(|| {
+                                                    SseStreamState {
+                                                        url: sse_url.clone(),
+                                                        accumulated_content: String::new(),
+                                                        is_fetching: false,
+                                                        is_complete: false,
+                                                    }
+                                                });
+                                                if !sse_state.is_fetching && !sse_state.is_complete {
+                                                    sse_state.is_fetching = true;
+                                                    start_sse_fetch(
+                                                        tl.kind.clone(),
+                                                        event_id.to_owned(),
+                                                        sse_url,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     done_loading = true;
                 }
                 TimelineUpdate::NewUnreadMessagesCount(unread_messages_count) => {
@@ -7538,6 +7572,20 @@ impl RoomScreen {
                 TimelineUpdate::FileUploadComplete => {
                     self.view.room_input_bar(cx, ids!(room_input_bar))
                         .hide_upload_progress(cx);
+                }
+                TimelineUpdate::SseContentUpdate { event_id, content, is_complete } => {
+                    if let Some(sse_state) = tl.sse_streams.get_mut(&event_id) {
+                        sse_state.accumulated_content = content;
+                        if is_complete {
+                            sse_state.is_complete = true;
+                            sse_state.is_fetching = false;
+                        }
+                    }
+                    tl.content_drawn_since_last_update.clear();
+                    if !tl.items.is_empty() {
+                        portal_list.set_first_id_and_scroll(tl.items.len().saturating_sub(1), 0.0);
+                        portal_list.set_tail_range(true);
+                    }
                 }
             }
         }
@@ -8939,6 +8987,7 @@ impl RoomScreen {
                 latest_own_user_receipt: None,
                 tombstone_info,
                 pending_downloads: Vec::new(),
+                sse_streams: HashMap::new(),
             };
             (tl_state, true)
         };
@@ -9528,6 +9577,15 @@ pub enum TimelineUpdate {
     AttachmentDownloadFinished(OwnedMxcUri, Result<(), String>),
     /// Remove the given pending-download entry and return to idle button state.
     AttachmentDownloadReset(OwnedMxcUri),
+    /// An update containing SSE (Server-Sent Events) content for a message.
+    SseContentUpdate {
+        /// The event ID of the message that contains the SSE stream.
+        event_id: OwnedEventId,
+        /// The accumulated content from the SSE stream (already complete, not a delta).
+        content: String,
+        /// Whether this is the final update (stream completed).
+        is_complete: bool,
+    },
 }
 
 thread_local! {
@@ -9670,6 +9728,17 @@ struct TimelineUiState {
     tombstone_info: Option<SuccessorRoomDetails>,
     /// Media attachments currently being downloaded in this timeline.
     pending_downloads: Vec<PendingDownload>,
+    /// Tracks active SSE streams by event ID.
+    sse_streams: HashMap<OwnedEventId, SseStreamState>,
+}
+
+/// State for tracking an SSE (Server-Sent Events) stream for a message.
+#[derive(Debug, Clone)]
+struct SseStreamState {
+    url: String,
+    accumulated_content: String,
+    is_fetching: bool,
+    is_complete: bool,
 }
 
 #[derive(Default, Debug)]
@@ -10125,6 +10194,7 @@ fn populate_message_view(
     action_button_contexts: &mut HashMap<WidgetUid, OctosActionButtonContext>,
     disabled_action_source_event_ids: &HashSet<OwnedEventId>,
     selected_actions: &HashMap<OwnedEventId, SelectedOctosActionState>,
+    sse_streams: &HashMap<OwnedEventId, SseStreamState>,
 ) -> (WidgetRef, ItemDrawnStatus) {
     let mut new_drawn_status = item_drawn_status;
     let ts_millis = event_tl_item.timestamp();
@@ -10183,6 +10253,41 @@ fn populate_message_view(
                     if existed && item_drawn_status.content_drawn {
                         (item, true)
                     } else {
+                        // SSE MODE: message body is an SSE header — display fetched content instead.
+                        if let Some(sse_url) = parse_sse_header(body) {
+                            let _ = sse_url; // URL is in sse_state.url if needed
+                            let display_body = if let Some(event_id) = event_tl_item.event_id() {
+                                if let Some(sse_state) = sse_streams.get(event_id) {
+                                    if sse_state.accumulated_content.is_empty() {
+                                        format!("Loading SSE from {}...", sse_state.url)
+                                    } else if sse_state.is_complete {
+                                        format!("SSE Complete:\n\n{}", sse_state.accumulated_content)
+                                    } else {
+                                        format!("SSE Streaming...\n\n{}", sse_state.accumulated_content)
+                                    }
+                                } else {
+                                    body.to_string()
+                                }
+                            } else {
+                                body.to_string()
+                            };
+                            let mut link_preview_ref =
+                                item.link_preview(cx, ids!(content.link_preview_view));
+                            new_drawn_status.content_drawn = populate_bot_text_message_content(
+                                cx,
+                                &item,
+                                app_language,
+                                &display_body,
+                                None,
+                                room_mention_room_id,
+                                Some(&mut link_preview_ref),
+                                Some(media_cache),
+                                Some(link_preview_cache),
+                                sender_is_bot,
+                            );
+                            return (item, new_drawn_status);
+                        }
+
                         // Check if this message is being streamed
                         let is_streaming = event_tl_item.event_id()
                             .and_then(|eid| streaming_messages.get_mut(&eid.to_owned()));
@@ -12840,6 +12945,29 @@ pub fn clear_timeline_states(_cx: &mut Cx) {
     TIMELINE_STATES.with_borrow_mut(|states| {
         states.clear();
     });
+}
+
+/// Parses an SSE header from a message body.
+///
+/// Expected format: `!SSE|<URL>|`
+/// Example: `!SSE|http://127.0.0.1:3000/events|`
+fn parse_sse_header(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.starts_with("!SSE|") {
+        if let Some(end_idx) = trimmed[5..].find('|') {
+            let url = &trimmed[5..5 + end_idx];
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Submits a background request to fetch SSE content for the given event.
+fn start_sse_fetch(timeline_kind: TimelineKind, event_id: OwnedEventId, url: String) {
+    use crate::sliding_sync::{MatrixRequest, submit_async_request};
+    submit_async_request(MatrixRequest::FetchSse { timeline_kind, event_id, url });
 }
 
 #[cfg(test)]
