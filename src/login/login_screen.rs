@@ -245,7 +245,7 @@ script_mod! {
                             width: 275, height: Fit,
                             flow: Right, // do not wrap
                             padding: Inset{top: 5, bottom: 5, left: 10, right: 10}
-                            empty_text: "matrix.org"
+                            empty_text: "matrix.palpo.im"
                             draw_text +: {
                                 text_style: TITLE_TEXT {font_size: 10.0}
                             }

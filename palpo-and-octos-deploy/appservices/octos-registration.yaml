@@ -11,7 +11,7 @@ id: octos-matrix-appservice
 # URL where Palpo pushes events to Octos.
 # When Octos runs on the host and Palpo stays in Docker, use Docker Desktop's
 # host bridge so the container can reach the host listener.
-url: "http://host.docker.internal:8009"
+url: "http://127.0.0.1:8009"
 
 # Tokens for mutual authentication between Palpo and Octos.
 # These are pre-filled for local development. Replace for production!

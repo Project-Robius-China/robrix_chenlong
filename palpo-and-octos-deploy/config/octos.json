@@ -1,5 +1,6 @@
 {
-  "profiles_dir": "/root/.octos/profiles",
-  "data_dir": "/root/.octos",
+  "version": 1,
+  "profiles_dir": "./config",
+  "data_dir": "./data/octos",
   "log_level": "debug"
 }

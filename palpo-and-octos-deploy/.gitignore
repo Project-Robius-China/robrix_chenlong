@@ -11,3 +11,8 @@ repos/
 federation/certs/
 federation/data/
 federation/nodes/*/media/
+*.pid
+octos
+palpo
+palpo-native.toml
+logs

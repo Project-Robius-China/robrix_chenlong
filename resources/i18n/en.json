@@ -87,7 +87,7 @@
   "login.input.user_id": "User ID",
   "login.input.password": "Password",
   "login.input.confirm_password": "Confirm password",
-  "login.input.homeserver": "matrix.org",
+  "login.input.homeserver": "matrix.palpo.im",
   "login.input.proxy": "http://127.0.0.1:7890",
   "login.label.homeserver_optional": "Homeserver URL (optional)",
   "login.label.proxy_optional": "Proxy URL (optional)",
