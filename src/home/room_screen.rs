@@ -12954,6 +12954,7 @@ pub fn clear_timeline_states(_cx: &mut Cx) {
 fn parse_sse_header(body: &str) -> Option<String> {
     let trimmed = body.trim();
     if trimmed.starts_with("!SSE|") {
+        log!("starts with !SSE, {:?}", trimmed);
         if let Some(end_idx) = trimmed[5..].find('|') {
             let url = &trimmed[5..5 + end_idx];
             if !url.is_empty() {
