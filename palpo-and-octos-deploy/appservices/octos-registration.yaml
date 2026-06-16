@@ -28,4 +28,6 @@ namespaces:
     - exclusive: true
       regex: "@octosbot:127\\.0\\.0\\.1:8128"
   aliases: []
-  rooms: []
+  rooms:
+    - exclusive: false
+      regex: ".*"

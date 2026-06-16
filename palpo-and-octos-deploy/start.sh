@@ -35,9 +35,15 @@ cleanup() {
     kill "$(cat "$DIR/.octos.pid")" 2>/dev/null || true
     rm -f "$DIR/.octos.pid"
   fi
+  # Kill any stray octos gateway processes (releases redb lock)
+  pkill -f "octos gateway" 2>/dev/null || true
   echo "    Done."
 }
 trap cleanup INT TERM
+
+# Kill any leftover octos from a previous run so redb lock is free
+pkill -f "octos gateway" 2>/dev/null || true
+sleep 0.5
 
 # ---- Generate native palpo config ----
 # Patches Docker-specific values from palpo.toml:
@@ -53,23 +59,28 @@ sed \
 
 # ---- Palpo ----
 echo "==> Starting palpo (log: logs/palpo.log)..."
+NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" \
 "$DIR/palpo" -c "$PALPO_NATIVE_CONFIG" >> "$DIR/logs/palpo.log" 2>&1 &
 echo $! > "$DIR/.palpo.pid"
 echo "    PID $(cat "$DIR/.palpo.pid")"
 
 # ---- Octos ----
-OCTOS_BIN="octos"
+OCTOS_BIN="$DIR/octos"
 if [ ! -f "$OCTOS_BIN" ]; then
   echo "==> Building octos with matrix support (first run, this may take a few minutes)..."
   cargo build --release --bin octos -p octos-cli --features matrix \
     --manifest-path "$DIR/repos/octos/Cargo.toml" \
     2>&1 | tee "$DIR/logs/octos-build.log"
+  cp "$DIR/repos/octos/target/release/octos" "$OCTOS_BIN"
 fi
 
 echo "==> Starting octos gateway (log: logs/octos.log)..."
 DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}" \
 RUST_LOG="${RUST_LOG:-octos=debug,info}" \
-"./$OCTOS_BIN" gateway \
+NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" \
+HTTP_PROXY="" \
+HTTPS_PROXY="" \
+"$OCTOS_BIN" gateway \
   --profile "$DIR/config/botfather.json" \
   --data-dir "$DIR/data/octos" \
   >> "$DIR/logs/octos.log" 2>&1 &
