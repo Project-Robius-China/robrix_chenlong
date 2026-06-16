@@ -10256,6 +10256,23 @@ fn populate_message_view(
                         // SSE MODE: message body is an SSE header — display fetched content instead.
                         if let Some(sse_url) = parse_sse_header(body) {
                             let _ = sse_url; // URL is in sse_state.url if needed
+                            if let Some(event_id) = event_tl_item.event_id() {
+                                if let Some(sse_state) = sse_streams.get(event_id) {
+                                    // When the SSE stream is done, check if the accumulated
+                                    // content contains a runsplash block and render as a
+                                    // Splash Card instead of plain text.
+                                    if sse_state.is_complete {
+                                        if let Some(splash_code) = extract_runsplash_block(&sse_state.accumulated_content) {
+                                            item.view(cx, ids!(content.message)).set_visible(cx, false);
+                                            let splash_widget = item.splash(cx, ids!(content.splash_card));
+                                            splash_widget.set_visible(cx, true);
+                                            splash_widget.set_text(cx, &splash_code);
+                                            new_drawn_status.content_drawn = true;
+                                            return (item, new_drawn_status);
+                                        }
+                                    }
+                                }
+                            }
                             let display_body = if let Some(event_id) = event_tl_item.event_id() {
                                 if let Some(sse_state) = sse_streams.get(event_id) {
                                     if sse_state.accumulated_content.is_empty() {
@@ -10330,10 +10347,12 @@ fn populate_message_view(
                                 .and_then(|content|
                                     content
                                         .get("org.octos.splash_card")
-                                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                        .and_then(|v| v.as_str().map(|s| s.replace('\n', "")))
                                 );
 
-                            if let Some(ref splash) = splash_code {
+                            if let Some(_splash) = splash_code {
+                                //println!("splash code 2 {:?}", splash);
+                                let splash = "```runsplash\nButton{text: \"Click me\" draw_bg +: {color: uniform(#1a6fd4) color_hover: uniform(#2280f0) color_down: uniform(#1055a8)}}\n```";
                                 // SPLASH CARD MODE: render native Makepad card
                                 item.view(cx, ids!(content.message)).set_visible(cx, false);
                                 let splash_widget = item.splash(cx, ids!(content.splash_card));
@@ -12951,6 +12970,42 @@ pub fn clear_timeline_states(_cx: &mut Cx) {
 ///
 /// Expected format: `!SSE|<URL>|`
 /// Example: `!SSE|http://127.0.0.1:3000/events|`
+/// Extract the Splash script from the first runsplash fenced block in `text`.
+///
+/// Handles both ` ```runsplash\n ` (inline tag) and ` ```\nrunsplash\n ` (tag on
+/// its own line, which is what most LLMs produce). Returns the raw script without
+/// fence markers.
+fn extract_runsplash_block(text: &str) -> Option<String> {
+    let fence_pos = text.find("```")?;
+    let after_fence = fence_pos + 3;
+    let start = {
+        let rest = &text[after_fence..];
+        if rest.starts_with("runsplash") {
+            let after_tag = after_fence + "runsplash".len();
+            let rest2 = &text[after_tag..];
+            if rest2.starts_with('\n') { after_tag + 1 }
+            else if rest2.starts_with(" \n") { after_tag + 2 }
+            else { after_tag }
+        } else if rest.starts_with('\n') {
+            let line_start = after_fence + 1;
+            let line = &text[line_start..];
+            if line.starts_with("runsplash") {
+                let after_tag = line_start + "runsplash".len();
+                let rest2 = &text[after_tag..];
+                if rest2.starts_with('\n') { after_tag + 1 }
+                else if rest2.starts_with(" \n") { after_tag + 2 }
+                else { after_tag }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    };
+    let close = text[start..].find("```")?;
+    Some(text[start..start + close].trim_end_matches('\n').to_string())
+}
+
 fn parse_sse_header(body: &str) -> Option<String> {
     let trimmed = body.trim();
     if trimmed.starts_with("!SSE|") {

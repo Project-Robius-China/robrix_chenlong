@@ -250,9 +250,10 @@ impl MessageAbilities {
     ) -> Self {
         let mut abilities = Self::empty();
         abilities.set(Self::CanEdit, event_tl_item.is_editable());
-        // Currently we only support deleting one's own messages.
         if event_tl_item.is_own() {
             abilities.set(Self::CanDelete, user_power_levels.can_redact_own());
+        } else {
+            abilities.set(Self::CanDelete, user_power_levels.can_redact_others());
         }
         abilities.set(Self::CanReplyTo, event_tl_item.can_be_replied_to());
         if let Some(event_id) = event_tl_item.event_id() && user_power_levels.can_pin() {
