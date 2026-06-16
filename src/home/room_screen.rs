@@ -10263,6 +10263,7 @@ fn populate_message_view(
                                     // Splash Card instead of plain text.
                                     if sse_state.is_complete {
                                         if let Some(splash_code) = extract_runsplash_block(&sse_state.accumulated_content) {
+                                            let splash_code = splash_code.replace("\\n", "\n").replace("\\\"", "");
                                             item.view(cx, ids!(content.message)).set_visible(cx, false);
                                             let splash_widget = item.splash(cx, ids!(content.splash_card));
                                             splash_widget.set_visible(cx, true);
@@ -10342,17 +10343,17 @@ fn populate_message_view(
                             );
                             new_drawn_status.content_drawn = false; // force re-render
                         } else {
-                            // Check for Splash card in custom event field
+                            // Check for Splash card: first in custom event field, then in message body.
                             let splash_code = latest_effective_event_content_json(event_tl_item)
                                 .and_then(|content|
                                     content
                                         .get("org.octos.splash_card")
-                                        .and_then(|v| v.as_str().map(|s| s.replace('\n', "")))
-                                );
+                                        .and_then(|v| v.as_str().map(|s| s.replace("\\n", "\n")))
+                                )
+                                .or_else(|| extract_runsplash_block(body));
 
-                            if let Some(_splash) = splash_code {
-                                //println!("splash code 2 {:?}", splash);
-                                let splash = "```runsplash\nButton{text: \"Click me\" draw_bg +: {color: uniform(#1a6fd4) color_hover: uniform(#2280f0) color_down: uniform(#1055a8)}}\n```";
+                            if let Some(ref splash) = splash_code {
+                                log!("splash {:?}", splash_code);
                                 // SPLASH CARD MODE: render native Makepad card
                                 item.view(cx, ids!(content.message)).set_visible(cx, false);
                                 let splash_widget = item.splash(cx, ids!(content.splash_card));
