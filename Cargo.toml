@@ -26,6 +26,7 @@ robius-location = { git = "https://github.com/Project-Robius-China/robius2.git" 
 
 
 anyhow = "1.0"
+libc = "0.2"
 bitflags = "2.6.0"
 blurhash = { version = "0.2.3", default-features = false }
 bytesize = "2.0"
@@ -85,6 +86,7 @@ sha2 = "0.10"
 unicode-segmentation = "1.11.0"
 percent-encoding = "2.3"
 url = "2.5.0"
+sherpa-onnx     = { version = "1", default-features = false, features = ["shared"] }
 
 ## Objective-C runtime for the parallel AVFoundation video capture used by
 ## the Robot tab on macOS. Same major version as the one Makepad already

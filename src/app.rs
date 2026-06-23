@@ -741,6 +741,14 @@ impl MatchEvent for App {
         // like the OBS Studio virtual camera — behind the home-screen load rather than
         // making the user wait at "Waiting for camera permission..." in the lobby.
         VoipGlobalState::initialize(cx);
+
+        // Initialize ASR global state. Model dir is read from env; widget stays
+        // inactive (no spinner, no recording) if the env var is unset.
+        let asr_model_dir = std::env::var("MAKEPAD_ASR_MODEL_DIR").unwrap_or_default();
+        crate::shared::sherpa_asr_input::init_global(cx, asr_model_dir);
+        // Trigger audio device enumeration so handle_audio_devices fires and
+        // wires the microphone for on-device ASR.
+        cx.use_audio_inputs(&[]);
     }
 
     fn handle_signal(&mut self, cx: &mut Cx) {
@@ -760,6 +768,16 @@ impl MatchEvent for App {
 
     fn handle_audio_devices(&mut self, cx: &mut Cx, devices: &AudioDevicesEvent) {
         cx.use_audio_outputs(&devices.default_output());
+        let inputs = devices.default_input();
+        log!("[ASR] handle_audio_devices: {} input(s), has_global={}", inputs.len(), cx.has_global::<crate::shared::sherpa_asr_input::SherpaAsrGlobal>());
+        if cx.has_global::<crate::shared::sherpa_asr_input::SherpaAsrGlobal>() {
+            cx.use_audio_inputs(&inputs);
+            let shared = cx.get_global::<crate::shared::sherpa_asr_input::SherpaAsrGlobal>().shared.clone();
+            log!("[ASR] registering cx.audio_input(0) callback");
+            cx.audio_input(0, move |info, buf| {
+                crate::shared::sherpa_asr_input::process_audio_input(&shared, info, buf);
+            });
+        }
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {

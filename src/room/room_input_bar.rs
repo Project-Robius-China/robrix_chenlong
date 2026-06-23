@@ -21,7 +21,7 @@ use matrix_sdk::room::reply::{EnforceThread, Reply};
 use ruma::events::room::message::AddMentions;
 use matrix_sdk_ui::timeline::{EmbeddedEvent, EventTimelineItem, TimelineEventItemId};
 use ruma::{events::room::message::{LocationMessageEventContent, MessageType, ReplyWithinThread, RoomMessageEventContent}, OwnedRoomId, OwnedUserId, UserId};
-use crate::{app::AppState, home::{editing_pane::{EditingPaneState, EditingPaneWidgetExt, EditingPaneWidgetRefExt}, location_preview::{LocationPreviewWidgetExt, LocationPreviewWidgetRefExt}, room_screen::{MessageAction, RoomScreenProps, is_known_or_likely_bot, populate_preview_of_timeline_item}, tombstone_footer::{SuccessorRoomDetails, TombstoneFooterWidgetExt}, upload_progress::UploadProgressViewWidgetRefExt}, i18n::{AppLanguage, tr_fmt, tr_key}, location::init_location_subscriber, room::translation::{self, TRANSLATION_REQUEST_ID}, shared::{avatar::AvatarWidgetRefExt, file_upload_modal::{FileData, FileLoadedData, FilePreviewerAction}, html_or_plaintext::HtmlOrPlaintextWidgetRefExt, mentionable_text_input::{MentionableTextInputWidgetExt, classify_known_slash_command_for_submission, parse_command_with_at_suffix}, popup_list::{PopupKind, enqueue_popup_notification}}, sliding_sync::{MatrixRequest, TimelineKind, UserPowerLevels, submit_async_request}, utils};
+use crate::{app::AppState, home::{editing_pane::{EditingPaneState, EditingPaneWidgetExt, EditingPaneWidgetRefExt}, location_preview::{LocationPreviewWidgetExt, LocationPreviewWidgetRefExt}, room_screen::{MessageAction, RoomScreenProps, is_known_or_likely_bot, populate_preview_of_timeline_item}, tombstone_footer::{SuccessorRoomDetails, TombstoneFooterWidgetExt}, upload_progress::UploadProgressViewWidgetRefExt}, i18n::{AppLanguage, tr_fmt, tr_key}, location::init_location_subscriber, room::translation::{self, TRANSLATION_REQUEST_ID}, shared::{avatar::AvatarWidgetRefExt, file_upload_modal::{FileData, FileLoadedData, FilePreviewerAction}, html_or_plaintext::HtmlOrPlaintextWidgetRefExt, mentionable_text_input::{MentionableTextInputWidgetExt, classify_known_slash_command_for_submission, parse_command_with_at_suffix}, popup_list::{PopupKind, enqueue_popup_notification}, sherpa_asr_input::{SherpaAsrInput, SherpaAsrInputAction}}, sliding_sync::{MatrixRequest, TimelineKind, UserPowerLevels, submit_async_request}, utils};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use crate::shared::file_upload_modal::{FilePreviewerMetaData, ThumbnailData};
 
@@ -793,6 +793,11 @@ script_mod! {
             icon_walk: Walk{width: 21, height: 21},
         }
 
+        // Microphone button for on-device speech-to-text via sherpa-onnx.
+        sherpa_asr_input := mod.widgets.SherpaAsrInput {
+            margin: Inset{left: 1, right: 3, top: 4, bottom: 4}
+        }
+
         more_actions_button := RobrixIconButton {
             spacing: 0,
             text: "",
@@ -1550,6 +1555,30 @@ impl RoomInputBar {
         if self.button(cx, ids!(send_attachment_button)).clicked(actions) {
             log!("Add attachment button clicked; opening file picker...");
             self.open_file_picker(cx);
+        }
+
+        // Handle ASR widget actions (speech recognition results and errors).
+        {
+            let asr_action = self.view.widget(cx, ids!(sherpa_asr_input))
+                .borrow::<SherpaAsrInput>()
+                .and_then(|w| w.handle_action(actions));
+            if let Some(action) = asr_action {
+                match action {
+                    SherpaAsrInputAction::FinalResult(text) => {
+                        let existing = mentionable_text_input.text();
+                        let new_text = if existing.trim().is_empty() {
+                            text
+                        } else {
+                            format!("{} {}", existing.trim_end(), text)
+                        };
+                        mentionable_text_input.set_text(cx, &new_text);
+                    }
+                    SherpaAsrInputAction::ModelLoadError(msg) => {
+                        enqueue_popup_notification(msg, PopupKind::Warning, Some(5.0));
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // Open the sticker modal showing only the user's added stickers.

@@ -31,7 +31,12 @@ impl SpeakingDetector {
         }
     }
 
-    /// Handle audio devices event and start monitoring
+    /// Handle audio devices event and start monitoring.
+    ///
+    /// When the on-device ASR feature is active, app.rs already owns
+    /// `cx.audio_input(0, …)` and updates `SherpaAsrShared::speaking_level`.
+    /// In that case we reuse the same Arc instead of registering a competing
+    /// callback that would overwrite ASR's and silence the microphone for both.
     pub fn handle_audio_devices(&mut self, cx: &mut Cx, ev: &AudioDevicesEvent) {
         log!("AudioDevices event: {} devices found", ev.descs.len());
 
@@ -39,8 +44,16 @@ impl SpeakingDetector {
         if let Some(device_id) = inputs.first() {
             log!("Using audio input device: {:?}", device_id);
             self.audio_device = Some(*device_id);
-            cx.use_audio_inputs(&[*device_id]);
 
+            if cx.has_global::<crate::shared::sherpa_asr_input::SherpaAsrGlobal>() {
+                self.audio_level = cx
+                    .get_global::<crate::shared::sherpa_asr_input::SherpaAsrGlobal>()
+                    .speaking_level
+                    .clone();
+                return;
+            }
+
+            cx.use_audio_inputs(&[*device_id]);
             let audio_level = self.audio_level.clone();
             cx.audio_input(0, move |_info, buffer| {
                 let rms = Self::calculate_rms(&buffer.data);
