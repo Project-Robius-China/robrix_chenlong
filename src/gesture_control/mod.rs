@@ -26,6 +26,8 @@ pub mod avf_capture;
 #[cfg(target_os = "android")]
 pub mod acamera_capture;
 pub mod frame_analyzer;
+pub mod mjpeg_reader;
+pub mod rc_screen;
 
 /// The six discrete gesture actions the classifier can emit, plus `None`
 /// for "no recognized gesture this frame".
@@ -110,5 +112,8 @@ impl GestureAction {
 pub fn script_mod(vm: &mut makepad_widgets::ScriptVm) {
     gesture_webcam_view::script_mod(vm);
     robot_control_panel::script_mod(vm);
+    // rc_screen must be registered before robot_screen so that
+    // `rc_panel := mod.widgets.RcScreen {}` resolves in robot_screen's DSL.
+    rc_screen::script_mod(vm);
     robot_screen::script_mod(vm);
 }

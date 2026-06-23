@@ -742,9 +742,22 @@ impl MatchEvent for App {
         // making the user wait at "Waiting for camera permission..." in the lobby.
         VoipGlobalState::initialize(cx);
 
-        // Initialize ASR global state. Model dir is read from env; widget stays
-        // inactive (no spinner, no recording) if the env var is unset.
-        let asr_model_dir = std::env::var("MAKEPAD_ASR_MODEL_DIR").unwrap_or_default();
+        // Initialize ASR global state.  Priority:
+        //   1. MAKEPAD_ASR_MODEL_DIR env var (developer override)
+        //   2. Previously-downloaded model in app_data_dir (auto-detected)
+        //   3. Empty string → widget will trigger download on first draw
+        let asr_model_dir = std::env::var("MAKEPAD_ASR_MODEL_DIR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if crate::shared::sherpa_model_downloader::model_present() {
+                    crate::shared::sherpa_model_downloader::sherpa_model_dir()
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    String::new()
+                }
+            });
         crate::shared::sherpa_asr_input::init_global(cx, asr_model_dir);
         // Trigger audio device enumeration so handle_audio_devices fires and
         // wires the microphone for on-device ASR.
@@ -1403,6 +1416,7 @@ impl MatchEvent for App {
                 self.ui.stack_navigation(cx, ids!(view_stack)).push(cx, live_id!(robot_view));
                 continue;
             }
+
 
             // Handle VoIP PiP overlay actions
             match action.downcast_ref() {

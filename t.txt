@@ -1,0 +1,8 @@
+cp -r "/Users/alanpoon/Library/Application Support/org.robius.robrix" "/Users/alanpoon/Library/Application Support/org.robius.robrix2"
+
+rm -rf "/Users/alanpoon/Library/Application Support/org.robius.robrix"
+
+cp -r "/Users/alanpoon/Library/Application Support/org.robius.robrix2" "/Users/alanpoon/Library/Application Support/org.robius.robrix"
+
+
+octosbot@matrix.chenlong.local:8128

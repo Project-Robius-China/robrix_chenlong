@@ -31,6 +31,7 @@ pub mod video_message_player;
 pub mod video_message_player_modal;pub mod webcam_capture;
 pub mod webrtc_video;
 pub mod sherpa_asr_input;
+pub mod sherpa_model_downloader;
 
 pub fn script_mod(vm: &mut ScriptVm) {
     // Order matters here, as some widget definitions depend on others.

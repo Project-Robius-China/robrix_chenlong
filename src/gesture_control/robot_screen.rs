@@ -22,6 +22,7 @@ use crate::gesture_control::{
     inference_worker::{InferenceWorker, InferenceWorkerAction},
     model_downloader,
     robot_http::{HttpOutcome, HttpResult, RobotHttpSender, validate_ip},
+    rc_screen::RcScreenAction,
 };
 
 /// Request-id tag for the hand-model ONNX download. Round-tripped through
@@ -58,23 +59,16 @@ script_mod! {
 
     mod.widgets.RobotScreen = #(RobotScreen::register_widget(vm)) {
         width: Fill, height: Fill
-        // Stack vertically (preview on top, control panel below) so the layout
-        // works on narrow mobile screens. Side-by-side flow:Right with the
-        // fixed 300dp panel degenerates the preview to a sliver on phones
-        // (~24dp wide after padding/spacing) and stalls Makepad's shadow
-        // shader during the StackNavigation push animation.
-        flow: Down
+        // flow:Overlay so both height:Fill children (panel_col and rc_wrapper)
+        // occupy the same space. Visibility controls which one is drawn.
+        // Using Down would split the height even when one child is invisible
+        // (visibility is checked at draw time, not layout time).
+        flow: Overlay
         show_bg: true
         draw_bg.color: (COLOR_PRIMARY)
         padding: Inset{top: 12, bottom: 12, left: 12, right: 12}
         spacing: 12
 
-        // Single control panel wrapped in a vertical scroll view so the
-        // contents (IP entry, status, gestures, D-pad, recent log) can
-        // overflow the viewport on phones without clipping. The panel
-        // itself is `height: Fill` so it claims the full RobotScreen body;
-        // its children stack with their natural heights and become
-        // scrollable when their sum exceeds Fill.
         panel_col := ScrollYView {
             width: Fill, height: Fill
             flow: Down
@@ -134,7 +128,6 @@ script_mod! {
 
                     preview_video := Video {
                         width: Fill, height: Fill
-                        visible: false
                     }
 
                     // Display surface for the Android path. Makepad's `Video`
@@ -344,6 +337,33 @@ script_mod! {
                     text_style: theme.font_regular { font_size: 11.0 }
                 }
             }
+
+            spacer_rc := View { width: Fill, height: 8 }
+
+            btn_rc := Button {
+                text: "RC Control"
+                width: Fill, height: 40
+                draw_bg +: { color: #x1a3a8b }
+                draw_text +: {
+                    color: #xFFFFFF
+                    color_hover: #xFFFFFF
+                    color_down: #xFFFFFF
+                    text_style: theme.font_bold { font_size: 14.0 }
+                }
+            }
+        }
+
+        // ── Layer 2: RC control overlay ─────────────────────────────────
+        // Wrapped in a plain View so set_visible() actually works — ViewRef
+        // can only borrow_mut() to View, so calling set_visible on a custom
+        // widget (RcScreen) is a silent no-op. The wrapper is always a View.
+        rc_wrapper := View {
+            width: Fill, height: Fill
+            visible: false
+
+            rc_panel := mod.widgets.RcScreen {
+                width: Fill, height: Fill
+            }
         }
     }
 }
@@ -540,6 +560,9 @@ impl RobotScreen {
                 }
             }
         }
+        // Video widget doesn't support `visible:` in DSL — hide it here so the
+        // camera slot starts dark until the user opens the camera.
+        self.view.video(cx, ids!(webcam_view.preview_video)).set_visible(cx, false);
         // Tell other camera consumers we're taking over.
         VoipGlobalState::acquire_camera_for(cx, CameraConsumer::Robot);
         self.camera_held = true;
@@ -668,6 +691,29 @@ impl RobotScreen {
                 self.emit_gesture(cx, action);
             }
         }
+
+        // RC control overlay toggle.
+        if self.view.button(cx, ids!(panel_col.btn_rc)).clicked(actions) {
+            self.show_rc_overlay(cx, true);
+        }
+
+        // RcScreen's 返回 button emits RcScreenAction::Back to dismiss the overlay.
+        for action in actions {
+            if let Some(RcScreenAction::Back) = action.downcast_ref() {
+                self.show_rc_overlay(cx, false);
+            }
+        }
+    }
+
+    /// Show or hide the RC control overlay (Layer 2) above the normal panel.
+    fn show_rc_overlay(&mut self, cx: &mut Cx, show: bool) {
+        self.view
+            .view(cx, ids!(rc_wrapper))
+            .set_visible(cx, show);
+        self.view
+            .view(cx, ids!(panel_col))
+            .set_visible(cx, !show);
+        self.view.redraw(cx);
     }
 
     /// Commit a new IP from the textbox: validate, persist to AppPreferences,

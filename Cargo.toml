@@ -83,6 +83,8 @@ tracing-subscriber = "0.3.17"
 ## Default features include the ONNX parser used by `hand_model::HandModel::load`.
 tract-onnx = "0.21"
 sha2 = "0.10"
+tar = "0.4"
+bzip2 = "0.4"
 unicode-segmentation = "1.11.0"
 percent-encoding = "2.3"
 url = "2.5.0"
@@ -188,6 +190,13 @@ sqlx = { git = "https://github.com/project-robius/sqlx.git", branch = "update_li
 ## This is required for the askar repos to work with the above-patched `sqlx` crate.
 ## See <https://github.com/openwallet-foundation/askar/pull/386>
 askar-storage = { git = "https://github.com/openwallet-foundation/askar.git" }
+
+## Patch sherpa-onnx-sys to add Android/aarch64 support.
+## The upstream crate (v1.13.3) panics on android targets because its archive_name()
+## function has no Android arm. This local copy adds the (Shared, "android", _) case
+## pointing to the sherpa-onnx-v{version}-android.tar.bz2 release archive, and adjusts
+## the lib subdir to jniLibs/<abi>/ (the structure used inside that archive).
+sherpa-onnx-sys = { path = "../makepad/libs/sherpa-onnx-sys" }
 
 
 ## This is a temporary patch to add the TSP signature field to the `RoomMessageEventContent` type.

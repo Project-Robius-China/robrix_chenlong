@@ -3,6 +3,17 @@ use makepad_widgets::makepad_platform::audio::{AudioInfo, AudioBuffer};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver};
+
+use crate::shared::{
+    sherpa_model_downloader,
+    popup_list::{PopupKind, enqueue_popup_notification},
+};
+
+/// Request-id for the sherpa model tar.bz2 download (via `cx.http_request`).
+pub const ASR_MODEL_DOWNLOAD_REQUEST_ID: LiveId = live_id!(sherpa_asr_model_download);
+
+/// Guards against multiple widget instances all kicking off the download.
+static ASR_DOWNLOAD_STARTED: AtomicBool = AtomicBool::new(false);
 use sherpa_onnx::{OnlineRecognizer, OnlineStream};
 
 // ─── Global state (set once by App::handle_startup) ──────────────────────────
@@ -435,6 +446,10 @@ pub struct SherpaAsrInput {
     #[rust] update_timer:      Timer,
     #[rust] mic_area:          Area,
     #[rust] loading_rx:        Option<Receiver<Result<OnlineRecognizer, String>>>,
+    /// This widget instance "owns" the in-flight `cx.http_request` download.
+    #[rust] owns_download:     bool,
+    /// Background thread extracting the downloaded tar.bz2.
+    #[rust] extract_rx:        Option<Receiver<Result<(), String>>>,
 
     /// The `CommandTextInput` (or `MentionableTextInput`) that receives
     /// recognized text. Set via [`set_command_input`].
@@ -500,7 +515,43 @@ impl SherpaAsrInput {
     }
 
     fn timer_tick(&mut self, cx: &mut Cx) {
-        // ── 0. Poll background loading thread ──────────────────────────────────
+        // ── 0a. Poll background extraction thread ───────────────────────────────
+        if let Some(rx) = &self.extract_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.extract_rx = None;
+                match result {
+                    Ok(()) => {
+                        let path = sherpa_model_downloader::sherpa_model_dir()
+                            .to_string_lossy()
+                            .to_string();
+                        log!("[ASR] model extracted to {path}, starting load");
+                        enqueue_popup_notification(
+                            "ASR model ready! Tap the mic to start speech recognition.",
+                            PopupKind::Success,
+                            Some(5.0),
+                        );
+                        self.model_dir = path;
+                        // model_dir_loaded still empty → timer_tick step 1 will start_loading()
+                    }
+                    Err(e) => {
+                        log!("[ASR] model extraction failed: {e}");
+                        enqueue_popup_notification(
+                            format!("ASR model extraction failed: {e}"),
+                            PopupKind::Error,
+                            None,
+                        );
+                        cx.widget_action(
+                            self.widget_uid(),
+                            SherpaAsrInputAction::ModelLoadError(
+                                format!("ASR model extraction failed: {e}"),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        // ── 0b. Poll background loading thread ──────────────────────────────────
         if let Some(rx) = &self.loading_rx {
             if let Ok(result) = rx.try_recv() {
                 self.loading_rx = None;
@@ -574,25 +625,45 @@ impl SherpaAsrInput {
             .unwrap_or(0.0);
         self.current_amplitude = self.current_amplitude * 0.7 + amplitude * 0.3;
 
-        if is_recording {
-            log!("[ASR] amplitude={:.4} current={:.4}", amplitude, self.current_amplitude);
-        }
-
         self.redraw(cx);
     }
 
     fn toggle_recording(&mut self, cx: &mut Cx) {
         let shared = match &self.shared { Some(s) => s.clone(), None => return };
         if self.recognizer.is_none() {
-            let msg = if self.model_dir.is_empty() {
-                "Speech recognition is not configured. Set MAKEPAD_ASR_MODEL_DIR to a sherpa-onnx model path.".into()
+            if self.extract_rx.is_some() {
+                enqueue_popup_notification(
+                    "ASR model extracting — speech recognition will be available shortly.",
+                    PopupKind::Info,
+                    Some(4.0),
+                );
+            } else if self.owns_download && self.model_dir.is_empty() {
+                enqueue_popup_notification(
+                    "ASR model downloading — speech recognition will be available once complete.",
+                    PopupKind::Info,
+                    Some(4.0),
+                );
+            } else if self.model_dir.is_empty() {
+                cx.widget_action(
+                    self.widget_uid(),
+                    SherpaAsrInputAction::ModelLoadError(
+                        "Speech recognition is not configured. Set MAKEPAD_ASR_MODEL_DIR to a sherpa-onnx model path.".into(),
+                    ),
+                );
             } else if self.model_dir_loaded == self.model_dir {
-                // Tried loading but failed — show a useful error.
-                format!("Speech recognition failed to load model at: {}", self.model_dir)
+                cx.widget_action(
+                    self.widget_uid(),
+                    SherpaAsrInputAction::ModelLoadError(
+                        format!("Speech recognition failed to load model at: {}", self.model_dir),
+                    ),
+                );
             } else {
-                "Speech recognition model is still loading — please wait.".into()
-            };
-            cx.widget_action(self.widget_uid(), SherpaAsrInputAction::ModelLoadError(msg));
+                enqueue_popup_notification(
+                    "ASR model loading — speech recognition will be available shortly.",
+                    PopupKind::Info,
+                    Some(4.0),
+                );
+            }
             return;
         }
 
@@ -622,9 +693,11 @@ impl Widget for SherpaAsrInput {
         self.draw_mic.accent_color = self.accent_color;
         let button_walk = Walk::fixed(self.mic_button_size, self.mic_button_size);
 
-        let is_loading = !self.model_dir.is_empty()
-            && self.model_dir != self.model_dir_loaded
-            && self.recognizer.is_none();
+        let is_loading = self.extract_rx.is_some()
+            || (self.owns_download && self.extract_rx.is_none() && self.model_dir.is_empty())
+            || (!self.model_dir.is_empty()
+                && self.model_dir != self.model_dir_loaded
+                && self.recognizer.is_none());
 
         if is_loading {
             self.draw_spinner.time = cx.time() as f32;
@@ -656,9 +729,57 @@ impl Widget for SherpaAsrInput {
             if self.model_dir.is_empty() && !model_dir.is_empty() {
                 self.model_dir = model_dir;
             }
+            // If the model dir is still empty, check cache state:
+            //   1. Archive cached but not yet extracted → extract from disk.
+            //   2. Nothing on disk → download the archive.
+            // The static flag ensures only one widget instance acts.
+            if self.model_dir.is_empty() && self.extract_rx.is_none() {
+                if !sherpa_model_downloader::model_present() {
+                    if sherpa_model_downloader::archive_cached() {
+                        // Archive already on disk from a previous download.
+                        if !ASR_DOWNLOAD_STARTED.swap(true, Ordering::SeqCst) {
+                            log!("[ASR] cached archive found, extracting without re-downloading");
+                            enqueue_popup_notification(
+                                "ASR model archive found in cache. Extracting…",
+                                PopupKind::Info,
+                                Some(5.0),
+                            );
+                            let (tx, rx) = mpsc::channel();
+                            std::thread::Builder::new()
+                                .stack_size(8 * 1024 * 1024)
+                                .spawn(move || {
+                                    let _ = tx.send(sherpa_model_downloader::extract_from_disk());
+                                })
+                                .ok();
+                            self.extract_rx = Some(rx);
+                        }
+                    } else if !ASR_DOWNLOAD_STARTED.swap(true, Ordering::SeqCst) {
+                        let url = sherpa_model_downloader::download_url();
+                        log!("[ASR] model not on disk — starting download from {url}");
+                        enqueue_popup_notification(
+                            "ASR model download started (this may take several minutes).",
+                            PopupKind::Info,
+                            Some(6.0),
+                        );
+                        cx.http_request(
+                            ASR_MODEL_DOWNLOAD_REQUEST_ID,
+                            HttpRequest::new(url.to_string(), HttpMethod::GET),
+                        );
+                        self.owns_download = true;
+                    }
+                }
+            }
             // Kick off background loading so we never block the UI thread.
             if !self.model_dir.is_empty() && self.recognizer.is_none() && self.loading_rx.is_none() {
                 self.start_loading();
+            }
+        }
+
+        // Handle the model download HTTP response (only the widget that issued
+        // the request processes it; others see a non-matching request_id).
+        if let Event::NetworkResponses(responses) = event {
+            for response in responses {
+                self.apply_model_download_response(cx, response);
             }
         }
 
@@ -670,6 +791,69 @@ impl Widget for SherpaAsrInput {
 
         if let Hit::FingerDown(_) = event.hits(cx, self.mic_area) {
             self.toggle_recording(cx);
+        }
+    }
+}
+
+impl SherpaAsrInput {
+    /// Consume a `NetworkResponse` for the sherpa model download, then spawn a
+    /// background thread to extract the tar.bz2 archive.
+    fn apply_model_download_response(&mut self, cx: &mut Cx, response: &NetworkResponse) {
+        match response {
+            NetworkResponse::HttpResponse { request_id, response: r }
+                if *request_id == ASR_MODEL_DOWNLOAD_REQUEST_ID =>
+            {
+                let status = r.status_code;
+                if !(200..300).contains(&status) {
+                    log!("[ASR] model download HTTP {status} — will retry on next startup");
+                    enqueue_popup_notification(
+                        format!("ASR model download failed (HTTP {status}). Will retry on next startup."),
+                        PopupKind::Error,
+                        None,
+                    );
+                    ASR_DOWNLOAD_STARTED.store(false, Ordering::SeqCst);
+                    self.owns_download = false;
+                    return;
+                }
+                let Some(body) = r.body.as_ref() else {
+                    log!("[ASR] model download: empty body");
+                    enqueue_popup_notification(
+                        "ASR model download failed: empty response body. Will retry on next startup.",
+                        PopupKind::Error,
+                        None,
+                    );
+                    ASR_DOWNLOAD_STARTED.store(false, Ordering::SeqCst);
+                    self.owns_download = false;
+                    return;
+                };
+                log!("[ASR] downloaded {} bytes, saving to cache then extracting", body.len());
+                enqueue_popup_notification(
+                    "ASR model downloaded. Saving to cache and extracting…",
+                    PopupKind::Info,
+                    Some(5.0),
+                );
+                let bytes = body.clone();
+                let (tx, rx) = mpsc::channel();
+                std::thread::Builder::new()
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn(move || { let _ = tx.send(sherpa_model_downloader::save_and_extract(bytes)); })
+                    .ok();
+                self.extract_rx = Some(rx);
+                self.redraw(cx);
+            }
+            NetworkResponse::HttpError { request_id, error }
+                if *request_id == ASR_MODEL_DOWNLOAD_REQUEST_ID =>
+            {
+                log!("[ASR] model download transport error: {} — will retry on next startup", error.message);
+                enqueue_popup_notification(
+                    format!("ASR model download failed: {}. Will retry on next startup.", error.message),
+                    PopupKind::Error,
+                    None,
+                );
+                ASR_DOWNLOAD_STARTED.store(false, Ordering::SeqCst);
+                self.owns_download = false;
+            }
+            _ => {}
         }
     }
 }

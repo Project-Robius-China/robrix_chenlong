@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/alanpoon/Documents/rust/makepad/libs/**)",
+      "Read(//Users/alanpoon/Documents/rust/makepad/**)",
+      "Bash(gh release *)",
+      "Bash(gh api *)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -L --max-time 30 -o /tmp/sherpa-android-listing.txt https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.3/sherpa-onnx-v1.13.3-android.tar.bz2 --range 0-65535)",
+      "Bash(tar -tjf -)"
+    ]
+  }
+}

@@ -2686,6 +2686,84 @@ script_mod! {
     }
 
 
+    // A timeline row for RTC call notifications (CallInvite, RtcNotification).
+    mod.widgets.RtcNotificationEvent = View {
+        width: Fill,
+        height: Fit,
+        flow: Right,
+        margin: Inset{ top: 4.0, bottom: 4.0}
+        padding: Inset{ top: 1.0, bottom: 1.0, right: 10.0 }
+        spacing: 0.0
+        cursor: MouseCursor.Default
+
+        body := View {
+            width: Fill,
+            height: Fit
+            flow: Down,
+            padding: Inset{ left: 7.0, top: 2.0, bottom: 2.0 }
+            spacing: 4.0
+
+            event_row := View {
+                width: Fill,
+                height: Fit
+                flow: Right,
+                spacing: 5.0
+
+                left_container := View {
+                    align: Align{x: 0.5, y: 0}
+                    width: 70.0,
+                    height: Fit
+
+                    timestamp := Timestamp {
+                        margin: Inset{top: 3}
+                    }
+                }
+
+                avatar := Avatar {
+                    width: 19.,
+                    height: 19.,
+                    margin: 0
+
+                    text_view +: {
+                        text +: {
+                            draw_text +: {
+                                text_style: TITLE_TEXT { font_size: 7.0 }
+                            }
+                        }
+                    }
+                }
+
+                content := Label {
+                    width: Fill,
+                    height: Fit
+                    flow: Flow.Right{wrap: true},
+                    margin: Inset{top: 2.5}
+                    padding: Inset{ top: 0.0, bottom: 0.0, left: 0.0, right: 0.0 }
+                    draw_text +: {
+                        text_style: SMALL_STATE_TEXT_STYLE {},
+                        color: (SMALL_STATE_TEXT_COLOR)
+                    }
+                    text: ""
+                }
+
+                join_call_button := RobrixPositiveIconButton {
+                    visible: true
+                    margin: Inset{ top: -1.5, left: 2, right: 2}
+                    padding: Inset{top: 4, bottom: 4, left: 9, right: 9}
+                    draw_bg +: {
+                        border_size: 0.75
+                    }
+                    draw_icon.svg: (ICON_VIDEO)
+                    draw_text.text_style: SMALL_STATE_TEXT_STYLE {}
+                    icon_walk: Walk{width: 15, height: Fit, margin: Inset{right: -4}}
+                    text: ""
+                }
+
+                avatar_row := mod.widgets.AvatarRow {}
+            }
+        }
+    }
+
     // The view used for each day divider in a room's timeline.
     // The date text is centered between two horizontal lines.
     mod.widgets.DateDivider = View {
