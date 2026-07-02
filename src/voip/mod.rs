@@ -164,6 +164,8 @@ pub enum CameraConsumer {
     VoipLobby,
     /// The Robot tab's webcam view (hand-gesture pipeline).
     Robot,
+    /// The QR scanner modal's webcam view.
+    QrScanner,
 }
 
 /// Global VoIP state stored in Makepad's Cx context.

@@ -20,7 +20,7 @@ script_mod! {
 
         RoundedView {
             flow: Down
-            width: 320
+            width: Fit
             height: Fit
             padding: Inset{top: 24, right: 24, bottom: 20, left: 24}
             spacing: 12
@@ -55,7 +55,7 @@ script_mod! {
             }
 
             qr_image := Image {
-                width: 272, height: 272
+                width: Fit, height: Fit
                 visible: false
             }
 

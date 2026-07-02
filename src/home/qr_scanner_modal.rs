@@ -11,6 +11,7 @@ use ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
 use crate::{
     cpu_worker::{CpuJob, DecodeQrFrameJob, QrFrameDecodedAction, spawn_cpu_job},
     shared::webcam_capture::{WebcamCaptureAction, WebcamCaptureWidgetRefExt},
+    voip::{CameraConsumer, VoipGlobalState},
 };
 
 // On macOS, Makepad's `cx.camera_frame_input` callback never fires in Native
@@ -84,7 +85,23 @@ script_mod! {
 
             camera_view := View {
                 width: 368, height: 276
+                flow: Overlay
                 webcam := WebcamCapture {}
+
+                qr_text_overlay := Label {
+                    width: Fill, height: Fit
+                    padding: Inset{top: 8, right: 12, bottom: 8, left: 12}
+                    flow: Flow.Right{wrap: true}
+                    draw_bg +: {
+                        color: #x000000BB
+                        border_radius: 4.0
+                    }
+                    draw_text +: {
+                        color: #0F0
+                        text_style: REGULAR_TEXT {font_size: 10}
+                    }
+                    visible: false
+                }
             }
 
             status_label := Label {
@@ -120,6 +137,8 @@ pub struct QrScannerModal {
     #[rust] camera_capture: Option<QrCapture>,
     #[rust] decoding: bool,
     #[rust] next_frame: NextFrame,
+    #[rust] frame_count: u32,
+    #[rust] not_found_count: u32,
 }
 
 impl Widget for QrScannerModal {
@@ -132,6 +151,9 @@ impl Widget for QrScannerModal {
             if let Some(ref capture) = self.camera_capture {
                 if !self.decoding {
                     if let Some(frame) = capture.try_recv() {
+                        self.frame_count += 1;
+                        log!("QrScanner: frame #{} {}x{} ({} bytes) → submitting for decode",
+                            self.frame_count, frame.width, frame.height, frame.data.len());
                         self.decoding = true;
                         spawn_cpu_job(cx, CpuJob::DecodeQrFrame(DecodeQrFrameJob {
                             rgba: frame.data,
@@ -140,6 +162,10 @@ impl Widget for QrScannerModal {
                         }));
                     }
                 }
+            } else if self.frame_count == 0 {
+                // camera_capture is None but we haven't logged yet — waiting for
+                // CaptureStarted to set it up.
+                log!("QrScanner: NextFrame received but camera_capture is None — waiting for CaptureStarted");
             }
             self.next_frame = cx.new_next_frame();
         }
@@ -162,15 +188,37 @@ impl WidgetMatchEvent for QrScannerModal {
         }
 
         // Camera started — register frame callback.
-        if let Some(WebcamCaptureAction::CaptureStarted { .. }) = actions
+        if let Some(WebcamCaptureAction::CaptureStarted { width, height }) = actions
             .iter()
             .find_map(|a| a.as_widget_action()
                 .filter(|wa| self.view.widget(cx, ids!(webcam)).widget_uid()
                     == wa.widget_uid)
                 .map(|wa| wa.cast_ref::<WebcamCaptureAction>()))
         {
+            log!("QrScanner: webcam CaptureStarted {}x{} — starting QrCapture", width, height);
+            self.frame_count = 0;
+            self.not_found_count = 0;
             self.camera_capture = start_qr_capture(cx);
+            if self.camera_capture.is_some() {
+                log!("QrScanner: QrCapture started OK");
+            } else {
+                log!("QrScanner: QrCapture start FAILED — no frames will be decoded");
+            }
             self.next_frame = cx.new_next_frame();
+        }
+
+        // No camera available — show message and keep trying on next open.
+        if let Some(WebcamCaptureAction::NoCameraAvailable) = actions
+            .iter()
+            .find_map(|a| a.as_widget_action()
+                .filter(|wa| self.view.widget(cx, ids!(webcam)).widget_uid()
+                    == wa.widget_uid)
+                .map(|wa| wa.cast_ref::<WebcamCaptureAction>()))
+        {
+            log!("QrScanner: NoCameraAvailable — no camera choice in global state");
+            self.view.label(cx, ids!(status_label))
+                .set_text(cx, "No camera available. Check camera connection and try again.");
+            self.redraw(cx);
         }
 
         // QR decode result.
@@ -178,20 +226,38 @@ impl WidgetMatchEvent for QrScannerModal {
             match action.downcast_ref::<QrFrameDecodedAction>() {
                 Some(QrFrameDecodedAction::Found { content }) => {
                     self.decoding = false;
-                    if is_matrix_room_uri(content) {
+                    let is_matrix = is_matrix_room_uri(content);
+                    log!("QrScanner: QR FOUND after {} frames — content={:?} is_matrix_room={}",
+                        self.frame_count, content, is_matrix);
+                    // Display the decoded QR text prominently on the camera overlay.
+                    self.view.label(cx, ids!(qr_text_overlay)).set_visible(cx, true);
+                    if is_matrix {
+                        self.view.label(cx, ids!(qr_text_overlay))
+                            .set_text(cx, &format!("✓ {content}"));
+                        self.view.label(cx, ids!(status_label))
+                            .set_text(cx, &format!("Room detected: {content}"));
+                        self.redraw(cx);
                         self.stop_camera(cx);
                         cx.action(QrScannerModalAction::RoomDetected {
                             content: content.clone(),
                         });
                     } else {
-                        // Not a Matrix room link — keep scanning, show hint.
+                        // Not a Matrix room link — display text and keep scanning.
+                        self.view.label(cx, ids!(qr_text_overlay))
+                            .set_text(cx, &format!("{content}"));
                         self.view.label(cx, ids!(status_label))
-                            .set_text(cx, "Not a Matrix room link. Keep scanning...");
+                            .set_text(cx, &format!("Scanned: {content}\nNot a Matrix room link. Keep scanning..."));
                         self.redraw(cx);
                     }
                 }
                 Some(QrFrameDecodedAction::NotFound) => {
                     self.decoding = false;
+                    self.not_found_count += 1;
+                    // Log every 30th miss to avoid flooding.
+                    if self.not_found_count % 30 == 1 {
+                        log!("QrScanner: no QR detected (frame #{}, {} misses so far)",
+                            self.frame_count, self.not_found_count);
+                    }
                 }
                 None => {}
             }
@@ -201,19 +267,35 @@ impl WidgetMatchEvent for QrScannerModal {
 
 impl QrScannerModal {
     pub fn open(&mut self, cx: &mut Cx) {
+        log!("QrScanner: modal opened — resetting state and starting webcam");
         self.decoding = false;
+        self.frame_count = 0;
+        self.not_found_count = 0;
         self.camera_capture = None;
         self.view.label(cx, ids!(status_label))
             .set_text(cx, "Point the camera at a Matrix room QR code.");
+        // Hide any previous QR text overlay.
+        self.view.label(cx, ids!(qr_text_overlay)).set_visible(cx, false);
+        // Acquire the camera so other consumers release.
+        VoipGlobalState::acquire_camera_for(cx, CameraConsumer::QrScanner);
         // Start the webcam preview — frame callback registered on CaptureStarted.
         self.view.widget(cx, ids!(webcam)).as_webcam_capture().start_capture_from_global(cx);
+        // Subscribe to NextFrame immediately so we always poll the camera once
+        // the parallel AvfCapture/CameraCapture is ready. Without this, if
+        // CaptureStarted is delayed the widget never enters the decode loop.
+        self.next_frame = cx.new_next_frame();
         self.redraw(cx);
     }
 
     fn stop_camera(&mut self, cx: &mut Cx) {
+        log!("QrScanner: stopping camera after {} frames, {} misses",
+            self.frame_count, self.not_found_count);
         self.camera_capture = None;
         self.decoding = false;
         self.view.widget(cx, ids!(webcam)).as_webcam_capture().stop_capture(cx);
+        // Hide the QR text overlay and release the camera.
+        self.view.label(cx, ids!(qr_text_overlay)).set_visible(cx, false);
+        VoipGlobalState::acquire_camera_for(cx, CameraConsumer::Idle);
     }
 }
 
