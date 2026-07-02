@@ -160,6 +160,13 @@ pub enum WebcamCaptureAction {
     Error(String),
 }
 
+impl ActionDefaultRef for WebcamCaptureAction {
+    fn default_ref() -> &'static Self {
+        static DEFAULT: WebcamCaptureAction = WebcamCaptureAction::None;
+        &DEFAULT
+    }
+}
+
 /// Capture state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CaptureState {

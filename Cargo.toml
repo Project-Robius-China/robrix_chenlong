@@ -43,6 +43,8 @@ hashbrown = { version = "0.16", features = ["raw-entry"] }
 htmlize = "1.0.5"
 indexmap = "2.6.0"
 image = "0.25"
+qrcode = "0.14"
+rqrr = "0.8"
 imghdr = "0.7.0"
 linkify = "0.10.0"
 mime = "0.3"
@@ -196,7 +198,7 @@ askar-storage = { git = "https://github.com/openwallet-foundation/askar.git" }
 ## function has no Android arm. This local copy adds the (Shared, "android", _) case
 ## pointing to the sherpa-onnx-v{version}-android.tar.bz2 release archive, and adjusts
 ## the lib subdir to jniLibs/<abi>/ (the structure used inside that archive).
-sherpa-onnx-sys = { path = "../makepad/libs/sherpa-onnx-sys" }
+# sherpa-onnx-sys = { path = "../makepad/libs/sherpa-onnx-sys" }  # Android/aarch64 patch — path missing on this machine
 
 
 ## This is a temporary patch to add the TSP signature field to the `RoomMessageEventContent` type.

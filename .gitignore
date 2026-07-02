@@ -15,4 +15,4 @@ env
 .mcp.json
 .octos-workspace.toml
 octos-data
-.env
+.env 

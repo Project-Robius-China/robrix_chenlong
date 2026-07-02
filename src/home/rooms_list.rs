@@ -29,6 +29,8 @@ use crate::{
         ContextMenuOpenGesture,
         add_room::CreateRoomAction,
         navigation_tab_bar::{NavigationBarAction, SelectedTab},
+        qr_code_modal::QrCodeModalAction,
+        room_context_menu::RoomContextMenuAction,
         room_context_menu::RoomContextMenuDetails,
         rooms_list_entry::RoomsListEntryAction,
         space_lobby::{SpaceLobbyAction, SpaceLobbyEntryWidgetExt},
@@ -545,6 +547,9 @@ pub struct RoomsList {
     #[rust] max_known_rooms: Option<u32>,
     // /// Whether the room list service has loaded all requested rooms from the homeserver.
     // #[rust] all_rooms_loaded: bool,
+
+    /// Pending QR code request: stores (room_id, room_name) while waiting for a Matrix link.
+    #[rust] pending_qr: Option<(OwnedRoomId, String)>,
 }
 
 impl ScriptHook for RoomsList {
@@ -1757,13 +1762,46 @@ impl Widget for RoomsList {
                         Some(3.0),
                     );
                 }
+                // Handle ShowQrCode: generate the matrix link, mark as pending QR.
+                if let Some(RoomContextMenuAction::ShowQrCode(room_id)) = action.downcast_ref() {
+                    let room_name = self.all_joined_rooms.get(room_id)
+                        .map(|r| r.room_name_id.to_string())
+                        .unwrap_or_else(|| "Unknown Room".to_string());
+                    self.pending_qr = Some((room_id.clone(), room_name));
+                    submit_async_request(MatrixRequest::GenerateMatrixLink {
+                        room_id: room_id.clone(),
+                        event_id: None,
+                        use_matrix_scheme: false,
+                        join_on_click: true,
+                    });
+                    continue;
+                }
+
                 match action.downcast_ref() {
                     Some(MatrixLinkAction::MatrixToUri(link)) => {
-                        on_link_generated(cx, &link.to_string());
+                        let link_str = link.to_string();
+                        if let Some((room_id, room_name)) = self.pending_qr.take() {
+                            cx.action(QrCodeModalAction::Open {
+                                room_name,
+                                url: link_str,
+                                room_id,
+                            });
+                        } else {
+                            on_link_generated(cx, &link_str);
+                        }
                         continue;
                     }
                     Some(MatrixLinkAction::MatrixUri(link)) => {
-                        on_link_generated(cx, &link.to_string());
+                        let link_str = link.to_string();
+                        if let Some((room_id, room_name)) = self.pending_qr.take() {
+                            cx.action(QrCodeModalAction::Open {
+                                room_name,
+                                url: link_str,
+                                room_id,
+                            });
+                        } else {
+                            on_link_generated(cx, &link_str);
+                        }
                         continue;
                     }
                     Some(MatrixLinkAction::Error(err)) => {

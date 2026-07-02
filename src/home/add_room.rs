@@ -7,7 +7,7 @@ use ruma::{IdParseError, MatrixToUri, MatrixUri, OwnedRoomId, OwnedRoomOrAliasId
 
 use crate::{
     app::{AppState, AppStateAction},
-    home::{invite_screen::JoinRoomResultAction, rooms_list::RoomsListRef},
+    home::{invite_screen::JoinRoomResultAction, qr_scanner_modal::QrScannerModalAction, rooms_list::RoomsListRef},
     i18n::{AppLanguage, tr_fmt, tr_key},
     profile::user_profile::UserProfile,
     room::{BasicRoomDetails, FetchedRoomAvatar, FetchedRoomPreview, RoomPreviewAction},
@@ -375,6 +375,14 @@ script_mod! {
                 draw_icon.svg: (ICON_SEARCH)
                 icon_walk: Walk{width: 16, height: 16}
                 text: "Go"
+            }
+
+            scan_qr_button := RobrixIconButton {
+                padding: Inset{top: 10, bottom: 10, left: 12, right: 14}
+                height: 40
+                draw_icon.svg: (ICON_SCAN)
+                icon_walk: Walk{width: 16, height: 16}
+                text: "Scan QR"
             }
         }
 
@@ -1589,6 +1597,38 @@ impl Widget for AddRoomScreen {
             // Enable or disable the button based on if the text input is empty.
             if let Some(text) = room_alias_id_input.changed(actions) {
                 search_for_room_button.set_enabled(cx, !text.trim().is_empty());
+            }
+
+            // Scan QR button opens the QR scanner modal.
+            if self.view.button(cx, ids!(scan_qr_button)).clicked(actions) {
+                cx.action(QrScannerModalAction::Open);
+            }
+
+            // Handle QR scanner result: pre-fill input and trigger room lookup.
+            for action in actions {
+                if let Some(QrScannerModalAction::RoomDetected { content }) = action.downcast_ref() {
+                    room_alias_id_input.set_text(cx, content);
+                    room_alias_id_input.set_key_focus(cx);
+                    // Trigger the room lookup.
+                    match parse_address(content.trim()) {
+                        Ok((room_or_alias_id, via)) => {
+                            self.state = AddRoomState::Parsed {
+                                room_or_alias_id: room_or_alias_id.clone(),
+                                via: via.clone(),
+                            };
+                            submit_async_request(MatrixRequest::GetRoomPreview {
+                                room_or_alias_id,
+                                via,
+                                response_mode: RoomPreviewResponseMode::Action,
+                            });
+                        }
+                        Err(_) => {
+                            // Invalid URI — the user can see the error when they press Go.
+                            search_for_room_button.set_enabled(cx, !content.trim().is_empty());
+                        }
+                    }
+                    self.redraw(cx);
+                }
             }
 
             // If the cancel button was clicked, hide the room preview and return to default state.

@@ -34,6 +34,8 @@ pub mod welcome_screen;
 pub mod event_reaction_list;
 pub mod new_message_context_menu;
 pub mod room_context_menu;
+pub mod qr_code_modal;
+pub mod qr_scanner_modal;
 pub mod room_settings_modal;
 pub mod link_preview;
 pub mod room_image_viewer;
@@ -111,6 +113,8 @@ pub fn script_mod(vm: &mut ScriptVm) {
     event_source_modal::script_mod(vm);
     sticker_modal::script_mod(vm);
     room_context_menu::script_mod(vm);
+    qr_scanner_modal::script_mod(vm);
+    qr_code_modal::script_mod(vm);
     room_settings_modal::script_mod(vm);
     invite_modal::script_mod(vm);
     invite_screen::script_mod(vm);

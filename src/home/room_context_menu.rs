@@ -79,6 +79,11 @@ script_mod! {
                 draw_icon +: { svg: (ICON_LINK) }
                 text: "Copy Link to Room"
             }
+
+            show_qr_button := mod.widgets.RoomContextMenuButton {
+                draw_icon +: { svg: (ICON_SCAN) }
+                text: "Show Room QR Code"
+            }
             
             divider1 := LineH {
                 margin: Inset{top: 3, bottom: 3}
@@ -140,6 +145,7 @@ pub struct RoomContextMenuDetails {
 pub enum RoomContextMenuAction {
     Notifications(OwnedRoomId),
     OpenRoomSettings(OwnedRoomId),
+    ShowQrCode(OwnedRoomId),
     #[default]
     None,
 }
@@ -239,6 +245,14 @@ impl WidgetMatchEvent for RoomContextMenu {
             });
             close_menu = true;
         }
+        else if self.button(cx, ids!(show_qr_button)).clicked(actions) {
+            if let Some(details) = &self.details {
+                cx.action(RoomContextMenuAction::ShowQrCode(
+                    details.room_name_id.room_id().clone()
+                ));
+            }
+            close_menu = true;
+        }
         else if self.button(cx, ids!(room_settings_button)).clicked(actions) {
             if let Some(details) = &self.details {
                 cx.action(RoomContextMenuAction::OpenRoomSettings(details.room_name_id.room_id().clone()));
@@ -318,6 +332,8 @@ impl RoomContextMenu {
 
         self.button(cx, ids!(copy_link_button))
             .set_text(cx, tr_key(self.app_language, "room_context_menu.button.copy_link_to_room"));
+        self.button(cx, ids!(show_qr_button))
+            .set_text(cx, "Show Room QR Code");
         self.button(cx, ids!(room_settings_button))
             .set_text(cx, tr_key(self.app_language, "room_context_menu.button.settings"));
         self.button(cx, ids!(notifications_button))
@@ -336,6 +352,7 @@ impl RoomContextMenu {
         favorite_button.reset_hover(cx);
         priority_button.reset_hover(cx);
         self.button(cx, ids!(copy_link_button)).reset_hover(cx);
+        self.button(cx, ids!(show_qr_button)).reset_hover(cx);
         self.button(cx, ids!(room_settings_button)).reset_hover(cx);
         self.button(cx, ids!(notifications_button)).reset_hover(cx);
         self.button(cx, ids!(invite_button)).reset_hover(cx);
@@ -345,8 +362,8 @@ impl RoomContextMenu {
         self.redraw(cx);
         
         // Calculate height (rudimentary) - sum of visible buttons + padding
-        // 8 or 9 buttons * 35.0 + 2 dividers * ~10.0 + padding
-        ((if details.app_service_enabled { 9.0 } else { 8.0 }) * BUTTON_HEIGHT) + 20.0 + 10.0 // approx
+        // 9 or 10 buttons * 35.0 + 2 dividers * ~10.0 + padding
+        ((if details.app_service_enabled { 10.0 } else { 9.0 }) * BUTTON_HEIGHT) + 20.0 + 10.0 // approx
     }
 
     fn close(&mut self, cx: &mut Cx) {

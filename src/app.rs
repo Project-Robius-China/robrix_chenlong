@@ -19,7 +19,7 @@ use crate::{
     avatar_cache::{self, clear_avatar_cache}, room_preview_cache::clear_room_preview_cache, home::{
         add_room::{CreateRoomModalAction, CreateRoomModalWidgetRefExt, StartChatModalAction, StartChatModalWidgetRefExt},
         bot_binding_modal::{BotBindingModalAction, BotBindingModalWidgetRefExt},
-        event_source_modal::{EventSourceModalAction, EventSourceModalWidgetRefExt}, invite_modal::{InviteModalAction, InviteModalWidgetRefExt, mark_invite_modal_closed}, invite_screen::{InviteScreenWidgetRefExt, LeaveRoomResultAction}, main_desktop_ui::MainDesktopUiAction, navigation_tab_bar::{NavigationBarAction, SelectedTab}, new_message_context_menu::NewMessageContextMenuWidgetRefExt, room_context_menu::{RoomContextMenuAction, RoomContextMenuWidgetRefExt}, room_screen::{InviteAction, MessageAction, RoomScreenWidgetRefExt, TimelineUpdate, clear_timeline_states}, room_settings_modal::{RoomSettingsAction, RoomSettingsModalWidgetRefExt}, rooms_list::{RoomsListAction, RoomsListRef, RoomsListUpdate, clear_all_invited_rooms, enqueue_rooms_list_update}, rooms_list_header::RoomsListHeaderAction, space_lobby::SpaceLobbyScreenWidgetRefExt, spaces_bar::SpacesBarRef
+        event_source_modal::{EventSourceModalAction, EventSourceModalWidgetRefExt}, invite_modal::{InviteModalAction, InviteModalWidgetRefExt, mark_invite_modal_closed}, invite_screen::{InviteScreenWidgetRefExt, LeaveRoomResultAction}, main_desktop_ui::MainDesktopUiAction, navigation_tab_bar::{NavigationBarAction, SelectedTab}, new_message_context_menu::NewMessageContextMenuWidgetRefExt, qr_code_modal::{QrCodeModalAction, QrCodeModalWidgetRefExt}, qr_scanner_modal::{QrScannerModalAction, QrScannerModalWidgetRefExt}, room_context_menu::{RoomContextMenuAction, RoomContextMenuWidgetRefExt}, room_screen::{InviteAction, MessageAction, RoomScreenWidgetRefExt, TimelineUpdate, clear_timeline_states}, room_settings_modal::{RoomSettingsAction, RoomSettingsModalWidgetRefExt}, rooms_list::{RoomsListAction, RoomsListRef, RoomsListUpdate, clear_all_invited_rooms, enqueue_rooms_list_update}, rooms_list_header::RoomsListHeaderAction, space_lobby::SpaceLobbyScreenWidgetRefExt, spaces_bar::SpacesBarRef
     }, i18n::{AppLanguage, tr_fmt, tr_key}, join_leave_room_modal::{
         JoinLeaveModalKind, JoinLeaveRoomModalAction, JoinLeaveRoomModalWidgetRefExt
     }, login::login_screen::LoginAction, logout::logout_confirm_modal::{LogoutAction, LogoutConfirmModalAction, LogoutConfirmModalWidgetRefExt}, persistence, profile::user_profile_cache::clear_user_profile_cache, register::RegisterAction, room::BasicRoomDetails, shared::{confirmation_modal::{ConfirmationModalAction, ConfirmationModalContent, ConfirmationModalWidgetRefExt}, file_upload_modal::{FilePreviewerAction, FileUploadModalWidgetRefExt}, forward_modal::{ForwardMessageModalAction, ForwardMessageModalWidgetRefExt}, image_viewer::{ImageViewerAction, LoadState}, popup_list::{PopupKind, enqueue_popup_notification}, room_filter_input_bar::FilterAction}, sliding_sync::{DirectMessageRoomAction, MatrixRequest, RemoteDirectorySearchKind, RemoteDirectorySearchResult, RoomSettingsFetchedAction, RoomAvatarUploadedAction, TimelineKind, AccountSwitchAction, current_user_id, get_client, submit_async_request, get_timeline_update_sender}, updater::{UpdateCheckOutcome, check_for_updates, load_skipped_update_version, save_skipped_update_version, update_release_page_url}, utils::RoomNameId, verification::VerificationAction, verification_modal::{
@@ -158,6 +158,20 @@ script_mod! {
                                 width: Fill,
                                 align: Align{x: 0.5, y: 0.5},
                                 bot_binding_modal_inner := BotBindingModal {}
+                            }
+                        }
+                        // A modal to display a room QR code.
+                        qr_code_modal := Modal {
+                            content +: {
+                                align: Align{x: 0.5, y: 0.5},
+                                qr_code_modal_inner := QrCodeModal {}
+                            }
+                        }
+                        // A modal for scanning QR codes to join rooms.
+                        qr_scanner_modal := Modal {
+                            content +: {
+                                align: Align{x: 0.5, y: 0.5},
+                                qr_scanner_modal_inner := QrScannerModal {}
                             }
                         }
                         room_filter_modal := Modal {
@@ -1788,6 +1802,43 @@ impl MatchEvent for App {
                 Some(InviteModalAction::Close) => {
                     mark_invite_modal_closed();
                     self.ui.modal(cx, ids!(invite_modal)).close(cx);
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Handle QrCodeModalAction to open/close the QR display modal.
+            match action.downcast_ref::<QrCodeModalAction>() {
+                Some(QrCodeModalAction::Open { room_name, url, room_id }) => {
+                    self.ui.modal(cx, ids!(qr_code_modal)).open(cx);
+                    self.ui.widget(cx, ids!(qr_code_modal_inner))
+                        .as_qr_code_modal()
+                        .open(cx, room_name.clone(), url.clone(), room_id.clone());
+                    continue;
+                }
+                Some(QrCodeModalAction::Close) => {
+                    self.ui.modal(cx, ids!(qr_code_modal)).close(cx);
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Handle QrScannerModalAction.
+            match action.downcast_ref::<QrScannerModalAction>() {
+                Some(QrScannerModalAction::Open) => {
+                    self.ui.modal(cx, ids!(qr_scanner_modal)).open(cx);
+                    self.ui.widget(cx, ids!(qr_scanner_modal_inner))
+                        .as_qr_scanner_modal()
+                        .open(cx);
+                    continue;
+                }
+                Some(QrScannerModalAction::Close) => {
+                    self.ui.modal(cx, ids!(qr_scanner_modal)).close(cx);
+                    continue;
+                }
+                Some(QrScannerModalAction::RoomDetected { .. }) => {
+                    self.ui.modal(cx, ids!(qr_scanner_modal)).close(cx);
+                    // RoomDetected is also handled by AddRoomScreen (below).
                     continue;
                 }
                 _ => {}
